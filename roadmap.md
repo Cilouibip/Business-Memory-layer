@@ -6,6 +6,28 @@ L'ordre est strict : chaque tâche dépend des précédentes. Ne pas sauter d'é
 
 ---
 
+## Statut d'avancement (vérifié le 2026-03-10)
+
+- Tâche 1 — Setup projet Next.js + Supabase : 🟡 Partiellement fait (structure OK, `src/lib/supabase.ts` OK, `.env.local.example` présent, `npm run build` OK ; `@supabase/supabase-js` non déclaré dans `package.json`).
+- Tâche 2 — Exécuter les migrations SQL : 🟡 Partiellement fait (la DB contient bien 11 tables et l'extension `vector` est active ; le fichier `supabase/migrations/001_initial_schema.sql` est absent, dossier avec seulement `.gitkeep`).
+- Tâche 3 — Créer les schémas Zod : ✅ Fait (8 fichiers présents dans `src/schemas`).
+- Tâche 4 — Connecteur YouTube : ✅ Fait (implémenté + tests OK).
+- Tâche 5 — Connecteur LinkedIn : 🟡 Partiellement fait (implémenté via `unipile-node-sdk` + tests OK ; la roadmap mentionnait `linkedin-api-client`).
+- Tâche 6 — Connecteur Notion : 🟡 En cours (implémenté, mais tests non verts : 3 échecs dans `tests/connectors/notion.test.ts`).
+- Tâche 7 — Pipeline triage : ✅ Fait (implémenté + tests OK).
+- Tâche 8 — Pipeline extraction : ✅ Fait (implémenté + tests OK ; les prompts seront ajustés dans le dossier CRC pipeline extractions).
+- Tâche 9 — Pipeline embedding : ❌ Non fait (`src/pipeline/embedding.ts` absent).
+- Tâche 10 — Endpoint POST `/api/memory/search` : ❌ Non fait.
+- Tâche 11 — Endpoint GET `/api/business-summary` : ❌ Non fait.
+- Tâche 12 — Endpoint POST `/api/context/build` : ❌ Non fait.
+- Tâche 13 — Endpoints restants (entity + sync status) : ❌ Non fait.
+- Tâche 14 — Cron orchestrateur + test end-to-end : ❌ Non fait.
+- Tâche 15 (optionnel) — Connecteur Google Drive : ❌ Non fait.
+
+**Validation actuelle :** `npm run build` ✅ ; `npm run test` ❌ (14 tests passent, 3 tests échouent sur Notion).
+
+---
+
 ## Tâche 1 — Setup projet Next.js + Supabase
 
 **Prérequis :** Aucun (première tâche)
