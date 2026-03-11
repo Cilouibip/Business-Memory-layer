@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { searchMemory } from '../../../lib/memoryQueries';
 import { crmTools } from '../../../lib/chatTools';
+import { supabase } from '../../../lib/supabase';
 
 const SYSTEM_PROMPT = `## Identité
 Tu es le copilote business de Mehdi Benchaffi. Tu agis comme un associé qui connaît le business — direct, pas corporate, anti-bullshit.
@@ -41,6 +42,8 @@ const ChatBodySchema = z.object({
       content: z.any(),
     }),
   ).min(1),
+  conversation_id: z.string().uuid().optional(),
+  workspace_id: z.string().min(1).max(100).optional(),
 });
 
 function extractUserText(content: unknown): string {
@@ -85,6 +88,49 @@ function toCoreMessages(messages: Array<{ role: string; content: unknown }>): Mo
     .filter((message) => message.content.length > 0);
 }
 
+function toMessageRole(role: string): 'user' | 'assistant' {
+  return role === 'assistant' ? 'assistant' : 'user';
+}
+
+function buildConversationTitle(query: string): string {
+  const trimmed = query.trim();
+  if (!trimmed) return 'Nouvelle conversation';
+  return trimmed.slice(0, 80);
+}
+
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const conversationId = url.searchParams.get('conversation_id');
+  const workspaceId = url.searchParams.get('workspace_id') ?? 'personal';
+
+  if (conversationId) {
+    const { data, error } = await (supabase as any)
+      .from('chat_messages')
+      .select('id, role, content, tool_calls, created_at')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ conversation_id: conversationId, messages: data ?? [] });
+  }
+
+  const { data, error } = await (supabase as any)
+    .from('chat_conversations')
+    .select('id, title, workspace_id, created_at, updated_at')
+    .eq('workspace_id', workspaceId)
+    .order('updated_at', { ascending: false })
+    .limit(30);
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ conversations: data ?? [] });
+}
+
 export async function POST(request: Request) {
   let body: unknown;
 
@@ -100,6 +146,7 @@ export async function POST(request: Request) {
   }
 
   const latestQuery = getLatestUserQuery(parsed.data.messages);
+  const workspaceId = parsed.data.workspace_id ?? 'personal';
   let memoryContext = 'Aucun contexte mémoire trouvé.';
 
   if (latestQuery.trim()) {
@@ -112,6 +159,47 @@ export async function POST(request: Request) {
   }
 
   const modelMessages = toCoreMessages(parsed.data.messages);
+  const reversed = [...parsed.data.messages].reverse();
+  const latestUserMessage = reversed.find((message) => toMessageRole(message.role) === 'user');
+  const latestUserText = latestUserMessage ? extractUserText(latestUserMessage.content) : '';
+  let conversationId = parsed.data.conversation_id;
+
+  if (!conversationId) {
+    const { data: createdConversation, error: createConversationError } = await (supabase as any)
+      .from('chat_conversations')
+      .insert({
+        title: buildConversationTitle(latestQuery),
+        workspace_id: workspaceId,
+      })
+      .select('id')
+      .single();
+
+    if (createConversationError || !createdConversation?.id) {
+      return NextResponse.json({ error: createConversationError?.message ?? 'Impossible de créer la conversation' }, { status: 500 });
+    }
+
+    conversationId = createdConversation.id;
+  }
+  if (!conversationId) {
+    return NextResponse.json({ error: 'Conversation invalide' }, { status: 500 });
+  }
+  const resolvedConversationId: string = conversationId;
+
+  if (latestUserText.trim()) {
+    const { error: userMessageError } = await (supabase as any)
+      .from('chat_messages')
+      .insert({
+        conversation_id: resolvedConversationId,
+        role: 'user',
+        content: latestUserText,
+      });
+
+    if (userMessageError) {
+      return NextResponse.json({ error: userMessageError.message }, { status: 500 });
+    }
+  }
+
+  await (supabase as any).from('chat_conversations').update({ updated_at: new Date().toISOString() }).eq('id', resolvedConversationId);
 
   const result = streamText({
     model: anthropic('claude-sonnet-4-5-20250929'),
@@ -120,10 +208,39 @@ export async function POST(request: Request) {
     tools: crmTools,
     maxRetries: 2,
     timeout: 60000,
+    onFinish: async ({ text, toolCalls }) => {
+      const assistantText = (text ?? '').trim();
+      const { error: assistantMessageError } = await (supabase as any)
+        .from('chat_messages')
+        .insert({
+          conversation_id: resolvedConversationId,
+          role: 'assistant',
+          content: assistantText,
+          tool_calls: toolCalls && toolCalls.length > 0 ? toolCalls : null,
+        });
+
+      if (assistantMessageError) {
+        console.error('[chat] assistant persistence failed', assistantMessageError);
+        return;
+      }
+
+      const { error: conversationUpdateError } = await (supabase as any)
+        .from('chat_conversations')
+        .update({ updated_at: new Date().toISOString() })
+        .eq('id', resolvedConversationId);
+
+      if (conversationUpdateError) {
+        console.error('[chat] conversation update failed', conversationUpdateError);
+      }
+    },
     onError: ({ error }) => {
       console.error('[chat] stream error', error);
     },
   });
 
-  return result.toUIMessageStreamResponse();
+  return result.toUIMessageStreamResponse({
+    headers: {
+      'x-conversation-id': resolvedConversationId,
+    },
+  });
 }

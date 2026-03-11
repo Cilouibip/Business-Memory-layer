@@ -6,6 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+const WORKSPACE_ID = "personal";
+
+type UiMessage = { id: string; role: "user" | "assistant"; content: string; toolBadges?: string[] };
+type ConversationItem = { id: string; title: string | null; updated_at: string };
 
 function inlineMarkdown(text: string) {
   const parts = text.split(/(\*\*.*?\*\*)/g).filter(Boolean);
@@ -31,29 +35,66 @@ function renderMarkdown(text: string) {
   );
 }
 
-function assistantText(message: any): string {
-  const textParts = (message.parts ?? [])
-    .filter((part: any) => part?.type === "text" && typeof part.text === "string")
-    .map((part: any) => part.text)
-    .join("");
-  return textParts || (typeof message.content === "string" ? message.content : "");
-}
-
-function toolBadges(message: any): string[] {
-  return message.toolBadges ?? [];
-}
-
 export default function ChatPage() {
   const endRef = useRef<HTMLDivElement | null>(null);
   const toolMapRef = useRef<Record<string, string>>({});
-  const [messages, setMessages] = useState<Array<{ id: string; role: "user" | "assistant"; content: string; toolBadges?: string[] }>>([]);
+  const [messages, setMessages] = useState<UiMessage[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversations, setConversations] = useState<ConversationItem[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "auto" });
   }, [messages]);
+
+  async function loadConversations() {
+    setIsLoadingConversations(true);
+    try {
+      const response = await fetch(`/api/chat?workspace_id=${WORKSPACE_ID}`);
+      if (!response.ok) throw new Error(`Erreur chargement conversations: ${response.status}`);
+      const data = await response.json();
+      setConversations((data.conversations ?? []) as ConversationItem[]);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setIsLoadingConversations(false);
+    }
+  }
+
+  async function openConversation(id: string) {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/chat?conversation_id=${id}`);
+      if (!response.ok) throw new Error(`Erreur chargement messages: ${response.status}`);
+      const data = await response.json();
+      const loaded: UiMessage[] = (data.messages ?? []).map((message: any) => {
+        const storedToolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+        const toolLabels = storedToolCalls
+          .map((call: any) => (typeof call?.toolName === "string" ? `Outil appelé : ${call.toolName}` : null))
+          .filter(Boolean) as string[];
+        return {
+          id: String(message.id),
+          role: message.role === "assistant" ? "assistant" : "user",
+          content: String(message.content ?? ""),
+          toolBadges: toolLabels,
+        };
+      });
+      setConversationId(id);
+      setMessages(loaded);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadConversations();
+  }, []);
 
   function badgeFromTool(toolName: string, output: any): string {
     if (toolName === "create_contact" && output?.name) return `Contact créé : ${output.name}`;
@@ -86,6 +127,8 @@ export default function ChatPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          conversation_id: conversationId ?? undefined,
+          workspace_id: WORKSPACE_ID,
           messages: nextMessages.map((message) => ({
             role: message.role,
             content: message.content,
@@ -95,6 +138,10 @@ export default function ChatPage() {
 
       if (!response.ok || !response.body) {
         throw new Error(`Erreur backend chat: ${response.status}`);
+      }
+      const newConversationId = response.headers.get("x-conversation-id");
+      if (newConversationId) {
+        setConversationId(newConversationId);
       }
 
       const reader = response.body.getReader();
@@ -158,6 +205,7 @@ export default function ChatPage() {
       setError((e as Error).message);
     } finally {
       setIsLoading(false);
+      await loadConversations();
     }
   }
 
@@ -168,9 +216,35 @@ export default function ChatPage() {
         <p className="mt-1 text-slate-500">Échange avec ton business brain</p>
       </div>
 
+      <Card className="border-slate-200 shadow-sm">
+        <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <CardTitle className="text-base text-slate-900">Conversations récentes</CardTitle>
+          <Button type="button" size="sm" variant="outline" onClick={() => { setConversationId(null); setMessages([]); setError(null); }}>Nouvelle conversation</Button>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <div className="flex flex-wrap gap-2">
+            {isLoadingConversations ? <p className="text-sm text-slate-500">Chargement...</p> : null}
+            {!isLoadingConversations && conversations.length === 0 ? <p className="text-sm text-slate-500">Aucune conversation.</p> : null}
+            {conversations.map((conversation) => (
+              <button
+                key={conversation.id}
+                type="button"
+                onClick={() => void openConversation(conversation.id)}
+                className={`rounded-md border px-3 py-1 text-left text-xs ${conversationId === conversation.id ? "border-slate-900 bg-slate-100 text-slate-900" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+              >
+                <div className="font-medium">{conversation.title || "Nouvelle conversation"}</div>
+                <div>{new Date(conversation.updated_at).toLocaleString("fr-FR")}</div>
+              </button>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
       <Card className="flex min-h-[620px] flex-1 flex-col border-slate-200 shadow-sm">
         <CardHeader className="pb-2">
-          <CardTitle className="text-base text-slate-900">Conversation</CardTitle>
+          <CardTitle className="text-base text-slate-900">
+            Conversation {conversationId ? `• ${conversationId.slice(0, 8)}` : "• nouvelle"}
+          </CardTitle>
         </CardHeader>
         <CardContent className="flex flex-1 flex-col gap-4 p-4">
           <ScrollArea className="h-[470px] rounded-md border border-slate-200 bg-white p-3">
@@ -183,8 +257,8 @@ export default function ChatPage() {
 
               {messages.map((message) => {
                 const isUser = message.role === "user";
-                const crmBadges = !isUser ? toolBadges(message) : [];
-                const text = isUser ? String(message.content ?? "") : assistantText(message as any);
+                const crmBadges = !isUser ? (message.toolBadges ?? []) : [];
+                const text = String(message.content ?? "");
 
                 return (
                   <div key={message.id} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>

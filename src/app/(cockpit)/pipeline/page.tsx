@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { createDealWithContact, deleteDeal, getDealsWithContacts, updateDeal, type DealStatus, type PipelineDeal } from "@/lib/pipelineQueries";
-import { supabase } from "@/lib/supabase";
+import { requireSupabaseBrowser } from "@/lib/supabaseBrowser";
 
 type Filter = "all" | DealStatus;
 type Field = "name" | "company" | "offer" | "amount" | "next_action" | "next_action_date";
@@ -114,7 +114,8 @@ export default function PipelinePage() {
       if (edit.field === "name" || edit.field === "company") {
         if (!current.contact?.id) throw new Error("Contact manquant");
         const payload = edit.field === "name" ? { name: v || "Sans nom" } : { company: v || null };
-        const { error: contactError } = await (supabase as any).from("contacts").update(payload).eq("id", current.contact.id);
+        const supabaseBrowser = requireSupabaseBrowser();
+        const { error: contactError } = await (supabaseBrowser as any).from("contacts").update(payload).eq("id", current.contact.id);
         if (contactError) throw new Error(contactError.message);
         setDeals((prev) =>
           prev.map((d) =>
