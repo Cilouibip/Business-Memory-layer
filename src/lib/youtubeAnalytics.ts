@@ -10,6 +10,8 @@ export type YouTubeVideoStats = {
   id: string;
   title: string;
   views: number;
+  likes: number;
+  comments: number;
   publishedAt: string;
 };
 
@@ -22,6 +24,20 @@ function parseCount(value: string | null | undefined): number {
 function getDateRangeLast30Days(): { startDate: string; endDate: string } {
   const end = new Date();
   const start = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const toIsoDate = (date: Date) => date.toISOString().slice(0, 10);
+  return { startDate: toIsoDate(start), endDate: toIsoDate(end) };
+}
+
+function getDateRangeLast7Days(): { startDate: string; endDate: string } {
+  const end = new Date();
+  const start = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const toIsoDate = (date: Date) => date.toISOString().slice(0, 10);
+  return { startDate: toIsoDate(start), endDate: toIsoDate(end) };
+}
+
+function getDateRangePrevious7Days(): { startDate: string; endDate: string } {
+  const end = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const start = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
   const toIsoDate = (date: Date) => date.toISOString().slice(0, 10);
   return { startDate: toIsoDate(start), endDate: toIsoDate(end) };
 }
@@ -95,8 +111,60 @@ export async function getYouTubeLatestVideos(limit = 3): Promise<YouTubeVideoSta
     id: video.id ?? '',
     title: video.snippet?.title ?? 'Vidéo sans titre',
     views: parseCount(video.statistics?.viewCount),
+    likes: parseCount(video.statistics?.likeCount),
+    comments: parseCount(video.statistics?.commentCount),
     publishedAt: video.snippet?.publishedAt ?? new Date(0).toISOString(),
   }));
+}
+
+export async function getAllVideos(): Promise<YouTubeVideoStats[]> {
+  const youtubeClient = buildYouTubeClient();
+  const channelId = getChannelId();
+  const videoIds: string[] = [];
+  let pageToken: string | undefined;
+
+  do {
+    const searchResponse = await youtubeClient.search.list({
+      part: ['id'],
+      channelId,
+      type: ['video'],
+      order: 'date',
+      maxResults: 50,
+      pageToken,
+    });
+
+    const ids = (searchResponse.data.items ?? [])
+      .map((item) => item.id?.videoId)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
+    videoIds.push(...ids);
+    pageToken = searchResponse.data.nextPageToken ?? undefined;
+  } while (pageToken);
+
+  if (videoIds.length === 0) {
+    return [];
+  }
+
+  const results: YouTubeVideoStats[] = [];
+  for (let i = 0; i < videoIds.length; i += 50) {
+    const chunk = videoIds.slice(i, i + 50);
+    const videosResponse = await youtubeClient.videos.list({
+      part: ['snippet', 'statistics'],
+      id: chunk,
+      maxResults: chunk.length,
+    });
+
+    const mapped = (videosResponse.data.items ?? []).map((video) => ({
+      id: video.id ?? '',
+      title: video.snippet?.title ?? 'Vidéo sans titre',
+      views: parseCount(video.statistics?.viewCount),
+      likes: parseCount(video.statistics?.likeCount),
+      comments: parseCount(video.statistics?.commentCount),
+      publishedAt: video.snippet?.publishedAt ?? new Date(0).toISOString(),
+    }));
+    results.push(...mapped);
+  }
+
+  return results.sort((a, b) => (a.publishedAt < b.publishedAt ? 1 : -1));
 }
 
 export async function getYouTubeViewsLast30Days(): Promise<number> {
@@ -119,16 +187,55 @@ export async function getYouTubeViewsLast30Days(): Promise<number> {
   return Number.isNaN(views) ? 0 : views;
 }
 
+async function getYouTubeMetricForRange(
+  metric: 'views' | 'subscribersGained',
+  range: { startDate: string; endDate: string },
+): Promise<number> {
+  const analyticsClient = buildYouTubeAnalyticsClient();
+  const report = await analyticsClient.reports.query({
+    ids: 'channel==MINE',
+    startDate: range.startDate,
+    endDate: range.endDate,
+    metrics: metric,
+  });
+
+  const firstRow = report.data.rows?.[0];
+  if (!firstRow || firstRow.length === 0) {
+    return 0;
+  }
+
+  const value = Number(firstRow[0]);
+  return Number.isNaN(value) ? 0 : value;
+}
+
+export async function getYouTubeWeeklyViews(): Promise<{ thisWeek: number; lastWeek: number; deltaPercent: number }> {
+  const [thisWeek, lastWeek] = await Promise.all([
+    getYouTubeMetricForRange('views', getDateRangeLast7Days()),
+    getYouTubeMetricForRange('views', getDateRangePrevious7Days()),
+  ]);
+
+  const deltaPercent = lastWeek <= 0 ? (thisWeek > 0 ? 100 : 0) : ((thisWeek - lastWeek) / lastWeek) * 100;
+  return { thisWeek, lastWeek, deltaPercent };
+}
+
+export async function getYouTubeSubscribersGainedLast7Days(): Promise<number> {
+  return getYouTubeMetricForRange('subscribersGained', getDateRangeLast7Days());
+}
+
 export async function getYouTubeBusinessSnapshot() {
-  const [channel, latestVideos, viewsLast30Days] = await Promise.all([
+  const [channel, latestVideos, viewsLast30Days, weeklyViews, subscribersGainedLast7Days] = await Promise.all([
     getYouTubeChannelStats(),
     getYouTubeLatestVideos(3),
     getYouTubeViewsLast30Days(),
+    getYouTubeWeeklyViews(),
+    getYouTubeSubscribersGainedLast7Days(),
   ]);
 
   return {
     channel,
     latestVideos,
     viewsLast30Days,
+    weeklyViews,
+    subscribersGainedLast7Days,
   };
 }

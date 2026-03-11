@@ -1,4 +1,6 @@
 import { supabase } from './supabase';
+import { getAllLinkedInPosts } from './linkedinAnalytics';
+import { getAllVideos, getYouTubeWeeklyViews } from './youtubeAnalytics';
 
 export type PipelineBusinessSummary = {
   leads: number;
@@ -12,6 +14,19 @@ export type TodoTask = {
   title: string;
   subtitle: string;
   priority: 'high' | 'medium' | 'low';
+};
+
+export type ContentCadence = {
+  lastLinkedInAt: string | null;
+  lastYoutubeAt: string | null;
+  linkedInDaysAgo: number | null;
+  youtubeDaysAgo: number | null;
+};
+
+export type WeeklyStats = {
+  thisWeekViews: number;
+  lastWeekViews: number;
+  deltaPercent: number;
 };
 
 export async function getDashboardStats() {
@@ -222,4 +237,37 @@ export async function getTodayTasks(): Promise<TodoTask[]> {
   }
 
   return tasks;
+}
+
+function daysAgoFromIso(isoDate: string | null): number | null {
+  if (!isoDate) return null;
+  const parsed = Date.parse(isoDate);
+  if (Number.isNaN(parsed)) return null;
+  return Math.max(0, Math.floor((Date.now() - parsed) / (1000 * 60 * 60 * 24)));
+}
+
+export async function getContentCadence(): Promise<ContentCadence> {
+  const [youtubeVideos, linkedInPosts] = await Promise.all([
+    getAllVideos(),
+    getAllLinkedInPosts(),
+  ]);
+
+  const lastYoutubeAt = youtubeVideos[0]?.publishedAt ?? null;
+  const lastLinkedInAt = linkedInPosts[0]?.publishedAt ?? null;
+
+  return {
+    lastLinkedInAt,
+    lastYoutubeAt,
+    linkedInDaysAgo: daysAgoFromIso(lastLinkedInAt),
+    youtubeDaysAgo: daysAgoFromIso(lastYoutubeAt),
+  };
+}
+
+export async function getWeeklyStats(): Promise<WeeklyStats> {
+  const weekly = await getYouTubeWeeklyViews();
+  return {
+    thisWeekViews: weekly.thisWeek,
+    lastWeekViews: weekly.lastWeek,
+    deltaPercent: weekly.deltaPercent,
+  };
 }

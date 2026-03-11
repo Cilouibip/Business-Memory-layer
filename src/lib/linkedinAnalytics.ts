@@ -86,3 +86,40 @@ export async function getLatestLinkedInPosts(limit = 3): Promise<LinkedInPostSta
     publishedAt: normalizeDate(post),
   }));
 }
+
+export async function getAllLinkedInPosts(): Promise<LinkedInPostStats[]> {
+  const accountId = getAccountId();
+  const providerId = await getProviderId(accountId);
+  const allPosts: UnipilePost[] = [];
+  let cursor: string | undefined;
+
+  while (true) {
+    const response = await (unipileClient as any).users.getAllPosts({
+      account_id: accountId,
+      identifier: providerId,
+      limit: 50,
+      ...(cursor ? { cursor } : {}),
+    });
+
+    const items = (response?.items ?? []) as UnipilePost[];
+    if (items.length === 0) {
+      break;
+    }
+
+    allPosts.push(...items);
+    const nextCursor = typeof response?.cursor === 'string' ? response.cursor : '';
+    if (!nextCursor || nextCursor === cursor) {
+      break;
+    }
+    cursor = nextCursor;
+  }
+
+  return allPosts.map((post) => ({
+    id: post.social_id ?? post.id ?? '',
+    text: truncate(sanitizeText(post.text ?? ''), 220),
+    likes: parseCounter(post.reaction_counter),
+    comments: parseCounter(post.comment_counter),
+    shares: parseCounter(post.repost_counter),
+    publishedAt: normalizeDate(post),
+  }));
+}
