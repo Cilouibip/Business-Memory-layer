@@ -1,10 +1,12 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Database, Linkedin, MessageSquare, Search, Youtube } from "lucide-react";
+import { MemorySearchForm } from "@/components/cockpit/MemorySearchForm";
+import { SyncButton } from "@/components/cockpit/SyncButton";
+import { TodayTasks } from "@/components/cockpit/TodayTasks";
+import { Database, Linkedin, MessageSquare, Youtube } from "lucide-react";
 import { getContentCadence, getDashboardStats, getPipelineBusinessSummary, getTodayTasks, getWeeklyStats } from "@/lib/dashboardQueries";
-import { getAllVideos, getYouTubeBusinessSnapshot } from "@/lib/youtubeAnalytics";
-import { getAllLinkedInPosts } from "@/lib/linkedinAnalytics";
+import { getAllVideos, getYouTubeBusinessSnapshot, type YouTubeVideoStats } from "@/lib/youtubeAnalytics";
+import { getAllLinkedInPosts, type LinkedInPostStats } from "@/lib/linkedinAnalytics";
 
 export default async function TodayPage() {
   const today = new Date();
@@ -17,23 +19,50 @@ export default async function TodayPage() {
     .format(today)
     .replace(/^./, (c) => c.toUpperCase());
 
-  let memory = { facts: 0, chunks: 0, entities: 0 }, youtubeData: Awaited<ReturnType<typeof getYouTubeBusinessSnapshot>> | null = null, allYoutubeVideos: Awaited<ReturnType<typeof getAllVideos>> = [], linkedinPosts: Awaited<ReturnType<typeof getAllLinkedInPosts>> = [], cadence: Awaited<ReturnType<typeof getContentCadence>> | null = null, weeklyStats: Awaited<ReturnType<typeof getWeeklyStats>> | null = null, pipeline = { leads: 0, inProgress: 0, proposals: 0, wonThisMonthRevenue: 0 }, todayTasks: Awaited<ReturnType<typeof getTodayTasks>> = [];
-  let youtubeError: string | null = null, linkedinError: string | null = null, pipelineError: string | null = null, tasksError: string | null = null;
+  const [
+    statsResult,
+    youtubeResult,
+    allVideosResult,
+    linkedinResult,
+    cadenceResult,
+    weeklyResult,
+    pipelineResult,
+    tasksResult,
+  ] = await Promise.allSettled([
+    getDashboardStats(),
+    getYouTubeBusinessSnapshot(),
+    getAllVideos(),
+    getAllLinkedInPosts(),
+    getContentCadence(),
+    getWeeklyStats(),
+    getPipelineBusinessSummary(),
+    getTodayTasks(),
+  ]);
 
-  try { const stats = await getDashboardStats(); memory = { facts: stats.facts, chunks: stats.chunks, entities: stats.entities }; } catch (error) { console.error("Erreur mémoire BML", error); }
-  try { youtubeData = await getYouTubeBusinessSnapshot(); } catch (error) { console.error("Erreur YouTube", error); youtubeError = "Données YouTube indisponibles"; }
-  try { allYoutubeVideos = await getAllVideos(); } catch (error) { console.error("Erreur vidéos YouTube complètes", error); }
-  try { linkedinPosts = await getAllLinkedInPosts(); } catch (error) { console.error("Erreur LinkedIn", error); linkedinError = "Données LinkedIn indisponibles"; }
-  try { cadence = await getContentCadence(); } catch (error) { console.error("Erreur cadence contenu", error); }
-  try { weeklyStats = await getWeeklyStats(); } catch (error) { console.error("Erreur stats hebdo", error); }
-  try { pipeline = await getPipelineBusinessSummary(); } catch (error) { console.error("Erreur Pipeline", error); pipelineError = "Données pipeline indisponibles"; }
-  try { todayTasks = await getTodayTasks(); } catch (error) { console.error("Erreur tâches du jour", error); tasksError = "Tâches indisponibles"; }
+  const stats = statsResult.status === 'fulfilled' ? statsResult.value : null;
+  const youtubeData = youtubeResult.status === 'fulfilled' ? youtubeResult.value : null;
+  const allYoutubeVideos = allVideosResult.status === 'fulfilled' ? allVideosResult.value : [];
+  const linkedinPosts = linkedinResult.status === 'fulfilled' ? linkedinResult.value : [];
+  const cadence = cadenceResult.status === 'fulfilled' ? cadenceResult.value : null;
+  const weeklyStats = weeklyResult.status === 'fulfilled' ? weeklyResult.value : null;
+  const pipeline =
+    pipelineResult.status === 'fulfilled'
+      ? pipelineResult.value
+      : { leads: 0, inProgress: 0, proposals: 0, wonThisMonthRevenue: 0 };
+  const todayTasks = tasksResult.status === 'fulfilled' ? tasksResult.value : [];
+  const memory = stats ? { facts: stats.facts, chunks: stats.chunks, entities: stats.entities } : { facts: 0, chunks: 0, entities: 0 };
+
+  const youtubeError = youtubeResult.status === 'rejected' ? 'Données YouTube indisponibles' : null;
+  const linkedinError = linkedinResult.status === 'rejected' ? 'Données LinkedIn indisponibles' : null;
+  const pipelineError = pipelineResult.status === 'rejected' ? 'Données pipeline indisponibles' : null;
+  const tasksError = tasksResult.status === 'rejected' ? 'Tâches indisponibles' : null;
 
   const totalPipelineItems = pipeline.leads + pipeline.inProgress + pipeline.proposals;
-  const visibleVideos = (allYoutubeVideos.length > 0 ? allYoutubeVideos : youtubeData?.latestVideos ?? []).slice(0, 3);
-  const hiddenVideos = (allYoutubeVideos.length > 0 ? allYoutubeVideos : youtubeData?.latestVideos ?? []).slice(3);
-  const visibleLinkedInPosts = linkedinPosts.slice(0, 3);
-  const hiddenLinkedInPosts = linkedinPosts.slice(3);
+  const videoList = (allYoutubeVideos.length > 0 ? allYoutubeVideos : youtubeData?.latestVideos ?? []) as YouTubeVideoStats[];
+  const visibleVideos = videoList.slice(0, 3);
+  const hiddenVideos = videoList.slice(3);
+  const visibleLinkedInPosts = linkedinPosts.slice(0, 3) as LinkedInPostStats[];
+  const hiddenLinkedInPosts = linkedinPosts.slice(3) as LinkedInPostStats[];
   const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const linkedIn30Days = linkedinPosts.filter((post) => {
     const parsed = Date.parse(post.publishedAt);
@@ -42,12 +71,6 @@ export default async function TodayPage() {
   const linkedInLikes30d = linkedIn30Days.reduce((sum, post) => sum + post.likes, 0);
   const linkedInComments30d = linkedIn30Days.reduce((sum, post) => sum + post.comments, 0);
   const deltaSign = weeklyStats && weeklyStats.deltaPercent > 0 ? "+" : "";
-  const priorityClass: Record<string, string> = {
-    high: "bg-red-100 text-red-700 border-red-200",
-    medium: "bg-amber-100 text-amber-700 border-amber-200",
-    low: "bg-slate-100 text-slate-700 border-slate-200",
-  };
-
   return (
     <div className="flex flex-col gap-8">
       <div>
@@ -76,8 +99,7 @@ export default async function TodayPage() {
             </CardHeader>
             <CardContent className="space-y-2">
               {tasksError ? <p className="text-sm text-slate-500">{tasksError}</p> : null}
-              {!tasksError && todayTasks.length === 0 ? (<p className="text-sm text-slate-500">Rien à faire — ton business tourne tout seul 🎉</p>) : null}
-              {!tasksError && todayTasks.map((task, index) => (<div key={`${task.type}-${index}`} className="rounded-md border border-slate-200 bg-white p-3"><div className="flex items-center justify-between gap-2"><p className="text-sm font-medium text-slate-900">{task.title}</p><Badge className={priorityClass[task.priority]}>{task.priority}</Badge></div><p className="mt-1 text-xs text-slate-500">{task.subtitle}</p></div>))}
+              {!tasksError ? <TodayTasks initialTasks={todayTasks} /> : null}
             </CardContent>
           </Card>
 
@@ -182,7 +204,23 @@ export default async function TodayPage() {
                     </p>
                   </div>
                 ))}
-              {!linkedinError && hiddenLinkedInPosts.length > 0 ? (<details className="rounded-md border border-slate-200 bg-slate-50 p-3"><summary className="cursor-pointer text-sm font-medium text-slate-700">Voir tous les posts ({linkedinPosts.length})</summary><div className="mt-3 space-y-2">{hiddenLinkedInPosts.map((post) => (<div key={`${post.id}-all`} className="rounded-md border border-slate-200 bg-white p-3"><p className="text-sm text-slate-900">{post.text || "Post sans texte"}</p><p className="mt-1 text-xs text-slate-500">👍 {post.likes} • 💬 {post.comments} • 🔁 {post.shares}</p></div>))}</div></details>) : null}
+              {!linkedinError && hiddenLinkedInPosts.length > 0 ? (
+                <details className="rounded-md border border-slate-200 bg-slate-50 p-3" suppressHydrationWarning>
+                  <summary className="cursor-pointer text-sm font-medium text-slate-700">
+                    Voir tous les posts ({linkedinPosts.length})
+                  </summary>
+                  <div className="mt-3 space-y-2">
+                    {hiddenLinkedInPosts.map((post) => (
+                      <div key={`${post.id}-all`} className="rounded-md border border-slate-200 bg-white p-3">
+                        <p className="text-sm text-slate-900">{post.text || "Post sans texte"}</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          👍 {post.likes} • 💬 {post.comments} • 🔁 {post.shares}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              ) : null}
             </CardContent>
           </Card>
         </div>
@@ -245,14 +283,8 @@ export default async function TodayPage() {
                   Entités: {memory.entities}
                 </Badge>
               </div>
-              <form action="/api/memory/search" method="POST" className="relative">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <Input
-                  name="query"
-                  placeholder="Recherche sémantique (ex: offre principale, objections clients...)"
-                  className="border-slate-200 bg-slate-50 pl-9"
-                />
-              </form>
+              <MemorySearchForm />
+              <SyncButton />
             </CardContent>
           </Card>
         </div>

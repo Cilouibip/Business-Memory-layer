@@ -305,3 +305,150 @@ L'ordre est strict : chaque tâche dépend des précédentes. Ne pas sauter d'é
 Tâches 1-14 : environ 16-18 heures de sessions d'agent IA.
 Avec les itérations et le débug : prévoir 25-30 heures au total.
 Soit environ 5-7 jours de travail focusé.
+
+# ROADMAP V2 — Source de vérité (12 mars 2026, Session CTO Claude #3)
+
+**STATUT : ACTIF — Remplace la Roadmap V1 et le Backlog du 11 mars.**
+
+**Auteur** : Claude CTO #3 (session 12 mars 2026)
+
+**Validé par** : Mehdi
+
+---
+
+## 0. ÉTAT RÉEL CONFIRMÉ PAR AUDIT (12 mars)
+
+**Build** : OK, 38/38 tests verts
+
+**Supabase** : 15 tables, 923 business facts, 458 entités, 102 chunks
+
+**CRM** : 2 contacts (Mezaelle + Quentin), 2 deals (1 won 6000€ + 1 qualif), 1 activité
+
+**Drafts** : Table existe, 0 drafts (agent jamais tourné)
+
+**Tasks** : Table N'EXISTE PAS
+
+**Cache YouTube** : N'EXISTE PAS (cache.ts absent)
+
+**Cron secret** : BUG — ouvert à tous si CRON_SECRET non défini
+
+**Fallback LinkedIn BML** : NON CODÉ
+
+**Recherche BML** : BUG 400 Invalid JSON body
+
+**Hydration** : BUG mismatch className sur bloc LinkedIn
+
+**Page /today** : 8-10 secondes (8 awaits séquentiels)
+
+---
+
+## PHASE 1 — STABILISATION (priorité absolue)
+
+Objectif : rendre le cockpit utilisable au quotidien.
+
+| # | Tâche | Détail | Effort |
+| --- | --- | --- | --- |
+| 1.1 | Créer cache.ts | Map mémoire Node.js TTL 30 min. Wrapper getYouTubeBusinessSnapshot, getAllVideos, getContentCadence | 30 min |
+| 1.2 | Paralléliser /today | Remplacer les 8 await séquentiels par Promise.allSettled | 30 min |
+| 1.3 | Fix cron secret | `if (!cronSecret) return false` au lieu de `return true` | 1 min |
+| 1.4 | Fix recherche BML | Le front envoie un body vide ou mal formaté à POST /api/memory/search. Vérifier le Content-Type et le body JSON | 15 min |
+| 1.5 | Fix hydration mismatch | className divergent serveur/client dans le bloc LinkedIn de today/page.tsx (ligne ~185) | 15 min |
+| 1.6 | Fallback LinkedIn BML | try/catch dans linkedinAnalytics.ts, si Unipile échoue → lire posts depuis raw_documents | 1h |
+| 1.7 | Fix [restart.sh](http://restart.sh) | Remplacer killall node par kill du process sur port 3000 uniquement | 5 min |
+| 1.8 | Fix getTodayTasks | Changer < aujourd'hui par <= aujourd'hui pour inclure les tâches du jour | 5 min |
+
+Livrable : le cockpit charge en <3s, YouTube affiche des données, recherche BML fonctionne, pas d'erreurs console.
+
+---
+
+## PHASE 2 — SYSTÈME DE TÂCHES
+
+Objectif : créer un vrai système de tâches avec alimentation manuelle + chat IA + agents.
+
+| # | Tâche | Détail | Effort |
+| --- | --- | --- | --- |
+| 2.1 | Migration 009_tasks.sql | Table tasks : id, workspace_id, title, description, status (todo/in_progress/done), priority (low/medium/high/urgent), due_date, source_type (manual/chat/agent), source_id, created_by, created_at, completed_at, updated_at | 15 min |
+| 2.2 | Routes API /api/tasks | POST (créer), GET (lister avec filtres status/priority/due_date), PATCH (mettre à jour statut/priorité) | 1h |
+| 2.3 | Outils chat CRM | create_task(title, due_date?, priority?, description?), complete_task(task_id), list_tasks(status?) dans chatTools.ts | 1h |
+| 2.4 | Refactorer getTodayTasks | Fusionner : tâches standalone (due_date = aujourd'hui ou en retard) + deals avec next_action en retard ou aujourd'hui | 30 min |
+| 2.5 | Vue tâches dans /today | Section tâches avec checkbox pour compléter + bouton Ajouter une tâche | 1h |
+| 2.6 | Écran Tâches dédié | Vue kanban (À faire / En cours / Fait) + vue liste avec priorités. Nouvel écran dans la sidebar | 2-3h |
+
+Livrable : les tâches fonctionnent bout en bout (création manuelle, chat IA, agents, affichage dashboard + écran dédié).
+
+---
+
+## PHASE 3 — AGENT LINKEDIN FONCTIONNEL
+
+Objectif : l'agent génère des drafts, on peut les voir et en générer à la demande.
+
+| # | Tâche | Détail | Effort |
+| --- | --- | --- | --- |
+| 3.1 | Test manuel generateDraft | Exécuter generateDraft() une fois manuellement. Vérifier qu'un draft apparaît en base | 15 min |
+| 3.2 | Bouton Générer maintenant | Route POST /api/agents/linkedin/generate + bouton sur écran Drafts | 30 min |
+| 3.3 | Vérifier cron Vercel | Après fix cron secret (1.3), confirmer que le cron 6h UTC fonctionne sur Vercel | 15 min |
+| 3.4 | Agent crée une tâche | Après génération d'un draft, créer automatiquement une tâche "Valider le draft LinkedIn" | 15 min |
+
+Livrable : des drafts générés quotidiennement + bouton pour en générer à la demande.
+
+---
+
+## PHASE 4 — DONNÉES YOUTUBE CORRECTES
+
+Objectif : le bloc YouTube affiche les vrais chiffres.
+
+| # | Tâche | Détail | Effort |
+| --- | --- | --- | --- |
+| 4.1 | Vérifier avec cache | Une fois le cache en place (1.1), confirmer que YouTube affiche abonnés, vues 30j, vidéos | 10 min |
+| 4.2 | Supprimer getAllVideos du chargement | getAllVideos() pagine toutes les vidéos (tueur de quota). Déplacer vers une page dédiée ou un bouton "Charger toutes les vidéos" | 30 min |
+| 4.3 | Quota monitoring | Afficher le quota restant dans les logs ou dans Paramètres | 15 min |
+
+Livrable : YouTube affiche des données fiables sans cramer le quota.
+
+---
+
+## PHASE 5 — MULTI-WORKSPACE MEZAELLE
+
+Objectif : séparer le contexte business Mehdi / Mezaelle.
+
+| # | Tâche | Détail | Effort |
+| --- | --- | --- | --- |
+| 5.1 | Migration workspace_id | Ajouter colonne workspace_id sur toutes les tables clés + table workspaces + backfill 'personal' | 30 min |
+| 5.2 | Filtrage backend | Toutes les API routes filtrent par workspace_id | 2-3h |
+| 5.3 | Sélecteur workspace | Dropdown dans la sidebar pour choisir le workspace actif | 1h |
+| 5.4 | Ingestion Mezaelle | Pas de Notion (compte privé). Ingestion manuelle ou via Google Sheets. À définir avec Mehdi | À évaluer |
+
+Livrable : deux espaces séparés (Mehdi perso + Mezaelle).
+
+---
+
+## PHASE 6 — UX (PLUS TARD)
+
+Pas de détail pour l'instant. On y reviendra quand le backend est stable.
+
+- Refonte complète du dashboard
+- Chat UX (Enter envoyer, streaming animé, stop button)
+- Pipeline kanban
+- Écran Paramètres (statuts connexions API)
+- Impressions LinkedIn (Shield ou PhantomBuster)
+
+---
+
+## DÉCISIONS PRISES (12 mars)
+
+- Unipile : Mehdi paie après le trial. En parallèle on explore Shield/PhantomBuster pour les impressions.
+- Tâches : kanban + liste, agents auto, chat crée des tâches
+- Mezaelle : pas de Notion (compte privé). Ingestion manuelle ou Google Sheets.
+- UX : plus tard, d'abord le backend
+- Prompts Windsurf : fournis en fichier MD par Claude CTO, pas sur Notion
+- Impressions LinkedIn : RGPD pas un souci pour le moment
+
+---
+
+## DOCUMENTS ASSOCIÉS
+
+- Passation V4 (source de vérité état du code)
+- Passation V3 (contexte complet)
+- Questions Ouvertes v2 (suivi questions résolues/en attente)
+- STYLE GUIDE LINKEDIN (prompts ghostwriter)
+- Architecture ouverte (MCP, GPT custom)

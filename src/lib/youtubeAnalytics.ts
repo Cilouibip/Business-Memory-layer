@@ -1,5 +1,6 @@
 import { google } from 'googleapis';
 import { createGoogleOAuth2Client } from './googleAuth';
+import { getCached, setCache } from './cache';
 
 export type YouTubeChannelStats = {
   title: string;
@@ -118,6 +119,9 @@ export async function getYouTubeLatestVideos(limit = 3): Promise<YouTubeVideoSta
 }
 
 export async function getAllVideos(): Promise<YouTubeVideoStats[]> {
+  const cached = getCached<YouTubeVideoStats[]>('youtube_all_videos');
+  if (cached) return cached;
+
   const youtubeClient = buildYouTubeClient();
   const channelId = getChannelId();
   const videoIds: string[] = [];
@@ -164,7 +168,9 @@ export async function getAllVideos(): Promise<YouTubeVideoStats[]> {
     results.push(...mapped);
   }
 
-  return results.sort((a, b) => (a.publishedAt < b.publishedAt ? 1 : -1));
+  const allVideos = results.sort((a, b) => (a.publishedAt < b.publishedAt ? 1 : -1));
+  setCache('youtube_all_videos', allVideos);
+  return allVideos;
 }
 
 export async function getYouTubeViewsLast30Days(): Promise<number> {
@@ -223,6 +229,9 @@ export async function getYouTubeSubscribersGainedLast7Days(): Promise<number> {
 }
 
 export async function getYouTubeBusinessSnapshot() {
+  const cached = getCached<any>('youtube_snapshot');
+  if (cached) return cached;
+
   const [channel, latestVideos, viewsLast30Days, weeklyViews, subscribersGainedLast7Days] = await Promise.all([
     getYouTubeChannelStats(),
     getYouTubeLatestVideos(3),
@@ -231,11 +240,13 @@ export async function getYouTubeBusinessSnapshot() {
     getYouTubeSubscribersGainedLast7Days(),
   ]);
 
-  return {
+  const result = {
     channel,
     latestVideos,
     viewsLast30Days,
     weeklyViews,
     subscribersGainedLast7Days,
   };
+  setCache('youtube_snapshot', result);
+  return result;
 }

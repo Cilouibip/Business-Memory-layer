@@ -8,6 +8,7 @@ import {
   getPipelineSummary,
   getOverdueActions,
 } from './crmQueries';
+import { completeTaskByTitle, createTask, listTasks, updateTask } from './taskQueries';
 
 export const crmTools = {
   create_contact: tool({
@@ -76,6 +77,59 @@ export const crmTools = {
     inputSchema: z.object({}),
     execute: async () => {
       return getOverdueActions();
+    },
+  }),
+  create_task: tool({
+    description: 'Crée une tâche dans le système de tâches',
+    inputSchema: z.object({
+      title: z.string().min(1),
+      due_date: z.string().optional(),
+      priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
+      description: z.string().optional(),
+    }),
+    execute: async ({ title, due_date, priority, description }) => {
+      return createTask({ title, due_date, priority, description, source_type: 'chat', created_by: 'chat' });
+    },
+  }),
+  complete_task: tool({
+    description: 'Complète une tâche par titre (fuzzy match) ou par id',
+    inputSchema: z.object({
+      task_title: z.string().optional(),
+      task_id: z.string().optional(),
+    }),
+    execute: async ({ task_title, task_id }) => {
+      if (task_id) {
+        return updateTask(task_id, { status: 'done' });
+      }
+      if (task_title) {
+        const result = await completeTaskByTitle(task_title);
+        if (!result) return { status: 'not_found', message: `Aucune tâche trouvée pour "${task_title}"` };
+        return { status: 'completed', task: result };
+      }
+      return { status: 'error', message: 'Fournis task_title ou task_id' };
+    },
+  }),
+  list_tasks: tool({
+    description: 'Liste les tâches, optionnellement filtrées par statut ou priorité',
+    inputSchema: z.object({
+      status: z.enum(['todo', 'in_progress', 'done']).optional(),
+      priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
+    }),
+    execute: async ({ status, priority }) => {
+      return listTasks({ status, priority });
+    },
+  }),
+  update_task: tool({
+    description: 'Met à jour une tâche (statut, priorité, date, titre)',
+    inputSchema: z.object({
+      task_id: z.string().min(1),
+      status: z.enum(['todo', 'in_progress', 'done']).optional(),
+      priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
+      due_date: z.string().optional(),
+      title: z.string().optional(),
+    }),
+    execute: async ({ task_id, status, priority, due_date, title }) => {
+      return updateTask(task_id, { status, priority, due_date, title });
     },
   }),
 };

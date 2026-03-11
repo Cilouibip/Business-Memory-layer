@@ -1,38 +1,17 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/bash
+echo "🔄 Restarting BML dev server..."
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PORT="3000"
-
-if [ ! -f "$ROOT_DIR/package.json" ]; then
-  echo "[restart] package.json introuvable dans $ROOT_DIR"
-  exit 1
-fi
-
-echo "[restart] Arrêt des process node de l'utilisateur $USER..."
-NODE_PIDS="$(pgrep -u "$USER" -x node || true)"
-if [ -n "$NODE_PIDS" ]; then
-  kill $NODE_PIDS || true
+# Kill only the process on port 3000
+PORT_PID=$(lsof -ti:3000 2>/dev/null)
+if [ -n "$PORT_PID" ]; then
+  echo "Killing process on port 3000 (PID: $PORT_PID)"
+  kill -9 $PORT_PID 2>/dev/null
   sleep 1
-
-  STILL_RUNNING="$(pgrep -u "$USER" -x node || true)"
-  if [ -n "$STILL_RUNNING" ]; then
-    echo "[restart] Forçage de l'arrêt des process node restants..."
-    kill -9 $STILL_RUNNING || true
-  fi
-else
-  echo "[restart] Aucun process node à arrêter."
 fi
 
-echo "[restart] Vérification du port $PORT..."
-PORT_PIDS="$(lsof -ti tcp:$PORT || true)"
-if [ -n "$PORT_PIDS" ]; then
-  kill -9 $PORT_PIDS || true
-fi
+# Clean Next.js lock
+rm -f .next/dev/lock
 
-echo "[restart] Nettoyage lock Next.js..."
-rm -f "$ROOT_DIR/.next/dev/lock"
-
-cd "$ROOT_DIR"
-echo "[restart] Démarrage Next.js sur localhost:$PORT"
-exec npm run dev -- -p "$PORT" --hostname localhost
+# Restart
+echo "Starting dev server on localhost:3000..."
+npm run dev -- -p 3000 --hostname localhost

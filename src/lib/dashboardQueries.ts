@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { getAllLinkedInPosts } from './linkedinAnalytics';
+import { getTodayAndOverdueTasks, type Task } from './taskQueries';
 import { getAllVideos, getYouTubeWeeklyViews } from './youtubeAnalytics';
 
 export type PipelineBusinessSummary = {
@@ -7,13 +8,6 @@ export type PipelineBusinessSummary = {
   inProgress: number;
   proposals: number;
   wonThisMonthRevenue: number;
-};
-
-export type TodoTask = {
-  type: 'overdue_action' | 'no_next_action' | 'publish_reminder';
-  title: string;
-  subtitle: string;
-  priority: 'high' | 'medium' | 'low';
 };
 
 export type ContentCadence = {
@@ -151,92 +145,74 @@ export async function getPipelineBusinessSummary(): Promise<PipelineBusinessSumm
   return { leads, inProgress, proposals, wonThisMonthRevenue };
 }
 
-function isActiveDeal(status: string | null | undefined): boolean {
-  return status !== 'won' && status !== 'lost';
-}
+export async function getTodayTasks() {
+  const today = new Date().toISOString().slice(0, 10);
+  const items: Array<{
+    type: 'task' | 'deal_action';
+    id: string;
+    title: string;
+    priority: string;
+    due_date: string | null;
+    source: string;
+  }> = [];
 
-function formatDaysAgo(days: number): string {
-  if (days <= 1) return 'il y a 1 jour';
-  return `il y a ${days} jours`;
-}
+  try {
+    const tasks = await getTodayAndOverdueTasks();
+    for (const task of tasks as Task[]) {
+      items.push({
+        type: 'task',
+        id: task.id,
+        title: task.title,
+        priority: task.priority,
+        due_date: task.due_date,
+        source: task.source_type,
+      });
+    }
+  } catch {}
 
-export async function getTodayTasks(): Promise<TodoTask[]> {
-  const tasks: TodoTask[] = [];
-  const todayIsoDate = new Date().toISOString().slice(0, 10);
+  try {
+    const { data: deals } = await (supabase as any)
+      .from('deals')
+      .select('id, offer, next_action, next_action_date, status')
+      .lte('next_action_date', today)
+      .not('next_action_date', 'is', null)
+      .in('status', ['lead', 'qualified', 'proposal', 'call_scheduled']);
 
-  const { data: dealsData, error: dealsError } = await (supabase as any)
-    .from('deals')
-    .select(
-      `
-      status,
-      next_action,
-      next_action_date,
-      contacts:contact_id (
-        name
-      )
-    `,
-    );
-
-  if (dealsError) {
-    throw new Error(`Erreur lors de la récupération des tâches pipeline: ${dealsError.message}`);
-  }
-
-  const deals = (dealsData ?? []) as Array<{
-    status?: string | null;
-    next_action?: string | null;
-    next_action_date?: string | null;
-    contacts?: { name?: string | null } | null;
-  }>;
-
-  for (const deal of deals) {
-    if (!isActiveDeal(deal.status)) continue;
-    const contactName = deal.contacts?.name?.trim() || 'contact sans nom';
-    const nextAction = deal.next_action?.trim() || 'action non définie';
-    const nextActionDate = (deal.next_action_date ?? '').slice(0, 10);
-
-    if (nextActionDate && nextActionDate < todayIsoDate) {
-      tasks.push({
-        type: 'overdue_action',
-        title: `Relance en retard : ${contactName} — ${nextAction}`,
-        subtitle: `Échéance: ${nextActionDate}`,
+    for (const deal of deals ?? []) {
+      items.push({
+        type: 'deal_action',
+        id: deal.id,
+        title: deal.next_action || `Relance ${deal.offer}`,
         priority: 'high',
+        due_date: deal.next_action_date,
+        source: 'crm',
       });
-      continue;
     }
+  } catch {}
 
-    if (!deal.next_action || !deal.next_action.trim()) {
-      tasks.push({
-        type: 'no_next_action',
-        title: `Définir prochaine action pour ${contactName}`,
-        subtitle: 'Aucune prochaine action renseignée',
+  try {
+    const { data: noAction } = await (supabase as any)
+      .from('deals')
+      .select('id, offer, status')
+      .is('next_action', null)
+      .in('status', ['lead', 'qualified', 'proposal', 'call_scheduled']);
+
+    for (const deal of noAction ?? []) {
+      items.push({
+        type: 'deal_action',
+        id: deal.id,
+        title: `Définir prochaine action pour ${deal.offer}`,
         priority: 'medium',
+        due_date: null,
+        source: 'crm',
       });
     }
-  }
+  } catch {}
 
-  const { data: latestLinkedInDoc, error: latestLinkedInError } = await (supabase as any)
-    .from('raw_documents')
-    .select('created_at')
-    .eq('source_type', 'linkedin')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const priorityOrder: Record<string, number> = { urgent: 4, high: 3, medium: 2, low: 1 };
+  items.sort((a, b) => (priorityOrder[b.priority] ?? 0) - (priorityOrder[a.priority] ?? 0));
 
-  if (!latestLinkedInError && latestLinkedInDoc?.created_at) {
-    const lastPostDate = new Date(latestLinkedInDoc.created_at);
-    const daysSince = Math.floor((Date.now() - lastPostDate.getTime()) / (1000 * 60 * 60 * 24));
-
-    if (daysSince > 3) {
-      tasks.push({
-        type: 'publish_reminder',
-        title: 'Publier un post LinkedIn',
-        subtitle: `Dernier post ${formatDaysAgo(daysSince)}`,
-        priority: 'medium',
-      });
-    }
-  }
-
-  return tasks;
+  return items;
 }
 
 function daysAgoFromIso(isoDate: string | null): number | null {

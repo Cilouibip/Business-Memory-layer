@@ -5,7 +5,7 @@ function isAuthorized(request: NextRequest): boolean {
   const cronSecret = process.env.CRON_SECRET;
 
   if (!cronSecret) {
-    return true;
+    return false;
   }
 
   const authorization = request.headers.get('authorization');
