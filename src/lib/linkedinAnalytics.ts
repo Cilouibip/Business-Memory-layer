@@ -27,9 +27,7 @@ function truncate(text: string, maxLength = 100): string {
 }
 
 function sanitizeText(text: string): string {
-  return text
-    .replace(/[\ud800-\udfff](?![\ud800-\udfff])|(?<![\ud800-\udfff])[\ud800-\udfff]/g, '')
-    .trim();
+  return text.replace(/[\u{10000}-\u{10FFFF}]/gu, '').replace(/[\uD800-\uDFFF]/g, '').trim();
 }
 
 function normalizeDate(post: UnipilePost): string {

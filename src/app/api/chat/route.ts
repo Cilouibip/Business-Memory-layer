@@ -1,5 +1,5 @@
 import { anthropic } from '@ai-sdk/anthropic';
-import { convertToModelMessages, streamText } from 'ai';
+import { streamText, type ModelMessage } from 'ai';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { searchMemory } from '../../../lib/memoryQueries';
@@ -75,6 +75,16 @@ function getLatestUserQuery(messages: Array<{ role: string; content: unknown }>)
   return extractUserText(latestUser.content);
 }
 
+function toCoreMessages(messages: Array<{ role: string; content: unknown }>): ModelMessage[] {
+  return messages
+    .map((message) => {
+      const role: 'assistant' | 'user' = message.role === 'assistant' ? 'assistant' : 'user';
+      const content = extractUserText(message.content);
+      return { role, content };
+    })
+    .filter((message) => message.content.length > 0);
+}
+
 export async function POST(request: Request) {
   let body: unknown;
 
@@ -101,9 +111,7 @@ export async function POST(request: Request) {
     }
   }
 
-  const modelMessages = await convertToModelMessages(parsed.data.messages as any, {
-    tools: crmTools,
-  });
+  const modelMessages = toCoreMessages(parsed.data.messages);
 
   const result = streamText({
     model: anthropic('claude-sonnet-4-5-20250929'),
