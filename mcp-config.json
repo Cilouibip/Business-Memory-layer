@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "bml-memory": {
+      "command": "npm",
+      "args": ["run", "mcp:start"],
+      "cwd": "CHEMIN_ABSOLU_VERS_BML"
+    }
+  }
+}
