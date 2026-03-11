@@ -1,5 +1,19 @@
 import { supabase } from './supabase';
 
+export type PipelineBusinessSummary = {
+  leads: number;
+  inProgress: number;
+  proposals: number;
+  wonThisMonthRevenue: number;
+};
+
+export type TodoTask = {
+  type: 'overdue_action' | 'no_next_action' | 'publish_reminder';
+  title: string;
+  subtitle: string;
+  priority: 'high' | 'medium' | 'low';
+};
+
 export async function getDashboardStats() {
   // Compter les raw_documents par source
   const { data: rawDocs, error: rawDocsError } = await supabase
@@ -80,4 +94,132 @@ export async function getDashboardStats() {
     chunks: chunksCount ?? 0,
     entities: entitiesCount ?? 0,
   };
+}
+
+export async function getPipelineBusinessSummary(): Promise<PipelineBusinessSummary> {
+  const { data, error } = await (supabase as any)
+    .from('deals')
+    .select('status, amount, updated_at');
+
+  if (error) {
+    throw new Error(`Erreur lors de la récupération du pipeline: ${error.message}`);
+  }
+
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth();
+  const rows = (data ?? []) as Array<{ status?: string; amount?: number | null; updated_at?: string | null }>;
+
+  let leads = 0;
+  let inProgress = 0;
+  let proposals = 0;
+  let wonThisMonthRevenue = 0;
+
+  for (const row of rows) {
+    const status = row.status ?? 'lead';
+    if (status === 'lead') leads += 1;
+    if (status === 'qualified' || status === 'call_scheduled') inProgress += 1;
+    if (status === 'proposal_sent') proposals += 1;
+
+    if (status === 'won' && typeof row.amount === 'number') {
+      const updatedAt = row.updated_at ? new Date(row.updated_at) : null;
+      if (
+        updatedAt &&
+        updatedAt.getFullYear() === currentYear &&
+        updatedAt.getMonth() === currentMonth
+      ) {
+        wonThisMonthRevenue += row.amount;
+      }
+    }
+  }
+
+  return { leads, inProgress, proposals, wonThisMonthRevenue };
+}
+
+function isActiveDeal(status: string | null | undefined): boolean {
+  return status !== 'won' && status !== 'lost';
+}
+
+function formatDaysAgo(days: number): string {
+  if (days <= 1) return 'il y a 1 jour';
+  return `il y a ${days} jours`;
+}
+
+export async function getTodayTasks(): Promise<TodoTask[]> {
+  const tasks: TodoTask[] = [];
+  const todayIsoDate = new Date().toISOString().slice(0, 10);
+
+  const { data: dealsData, error: dealsError } = await (supabase as any)
+    .from('deals')
+    .select(
+      `
+      status,
+      next_action,
+      next_action_date,
+      contacts:contact_id (
+        name
+      )
+    `,
+    );
+
+  if (dealsError) {
+    throw new Error(`Erreur lors de la récupération des tâches pipeline: ${dealsError.message}`);
+  }
+
+  const deals = (dealsData ?? []) as Array<{
+    status?: string | null;
+    next_action?: string | null;
+    next_action_date?: string | null;
+    contacts?: { name?: string | null } | null;
+  }>;
+
+  for (const deal of deals) {
+    if (!isActiveDeal(deal.status)) continue;
+    const contactName = deal.contacts?.name?.trim() || 'contact sans nom';
+    const nextAction = deal.next_action?.trim() || 'action non définie';
+    const nextActionDate = (deal.next_action_date ?? '').slice(0, 10);
+
+    if (nextActionDate && nextActionDate < todayIsoDate) {
+      tasks.push({
+        type: 'overdue_action',
+        title: `Relance en retard : ${contactName} — ${nextAction}`,
+        subtitle: `Échéance: ${nextActionDate}`,
+        priority: 'high',
+      });
+      continue;
+    }
+
+    if (!deal.next_action || !deal.next_action.trim()) {
+      tasks.push({
+        type: 'no_next_action',
+        title: `Définir prochaine action pour ${contactName}`,
+        subtitle: 'Aucune prochaine action renseignée',
+        priority: 'medium',
+      });
+    }
+  }
+
+  const { data: latestLinkedInDoc, error: latestLinkedInError } = await (supabase as any)
+    .from('raw_documents')
+    .select('created_at')
+    .eq('source_type', 'linkedin')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!latestLinkedInError && latestLinkedInDoc?.created_at) {
+    const lastPostDate = new Date(latestLinkedInDoc.created_at);
+    const daysSince = Math.floor((Date.now() - lastPostDate.getTime()) / (1000 * 60 * 60 * 24));
+
+    if (daysSince > 3) {
+      tasks.push({
+        type: 'publish_reminder',
+        title: 'Publier un post LinkedIn',
+        subtitle: `Dernier post ${formatDaysAgo(daysSince)}`,
+        priority: 'medium',
+      });
+    }
+  }
+
+  return tasks;
 }

@@ -1,215 +1,254 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Search, Youtube, FileText, Linkedin, Database, MessageSquare } from "lucide-react";
-import { getDashboardStats } from "@/lib/dashboardQueries";
+import { Database, Linkedin, MessageSquare, Search, Youtube } from "lucide-react";
+import { getDashboardStats, getPipelineBusinessSummary, getTodayTasks } from "@/lib/dashboardQueries";
+import { getYouTubeBusinessSnapshot } from "@/lib/youtubeAnalytics";
+import { getLatestLinkedInPosts } from "@/lib/linkedinAnalytics";
 
 export default async function TodayPage() {
-  const stats = await getDashboardStats();
-
-  const summary = { entities: stats.entities, facts: stats.facts, memories: stats.chunks };
-  
-  const youtubeStatus = stats.syncStatus['youtube'];
-  const notionStatus = stats.syncStatus['notion'];
-  const linkedinStatus = stats.syncStatus['linkedin'];
-
-  // Format date correctly ensuring we use valid formatting even if date strings are missing
   const today = new Date();
-  const formattedDate = new Intl.DateTimeFormat('fr-FR', { 
-    weekday: 'long', 
-    year: 'numeric', 
-    month: 'long', 
-    day: 'numeric' 
-  }).format(today);
+  const displayDate = new Intl.DateTimeFormat("fr-FR", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  })
+    .format(today)
+    .replace(/^./, (c) => c.toUpperCase());
 
-  // Capitalize first letter
-  const displayDate = formattedDate.charAt(0).toUpperCase() + formattedDate.slice(1);
+  let memory = { facts: 0, chunks: 0, entities: 0 };
+  let youtubeData: Awaited<ReturnType<typeof getYouTubeBusinessSnapshot>> | null = null;
+  let linkedinPosts: Awaited<ReturnType<typeof getLatestLinkedInPosts>> = [];
+  let pipeline = { leads: 0, inProgress: 0, proposals: 0, wonThisMonthRevenue: 0 };
+  let todayTasks: Awaited<ReturnType<typeof getTodayTasks>> = [];
 
-  // Calculate last sync date across all connectors
-  const allSyncDates = Object.values(stats.syncStatus)
-    .map(s => s.last_sync ? new Date(s.last_sync).getTime() : 0)
-    .filter(t => t > 0);
-  const lastSyncDate = allSyncDates.length > 0 
-    ? new Date(Math.max(...allSyncDates)).toLocaleString('fr-FR')
-    : 'Jamais';
+  let youtubeError: string | null = null;
+  let linkedinError: string | null = null;
+  let pipelineError: string | null = null;
+  let tasksError: string | null = null;
+
+  try {
+    const stats = await getDashboardStats();
+    memory = { facts: stats.facts, chunks: stats.chunks, entities: stats.entities };
+  } catch (error) {
+    console.error("Erreur mémoire BML", error);
+  }
+
+  try {
+    youtubeData = await getYouTubeBusinessSnapshot();
+  } catch (error) {
+    console.error("Erreur YouTube", error);
+    youtubeError = "Données YouTube indisponibles";
+  }
+
+  try {
+    linkedinPosts = await getLatestLinkedInPosts(3);
+  } catch (error) {
+    console.error("Erreur LinkedIn", error);
+    linkedinError = "Données LinkedIn indisponibles";
+  }
+
+  try {
+    pipeline = await getPipelineBusinessSummary();
+  } catch (error) {
+    console.error("Erreur Pipeline", error);
+    pipelineError = "Données pipeline indisponibles";
+  }
+
+  try {
+    todayTasks = await getTodayTasks();
+  } catch (error) {
+    console.error("Erreur tâches du jour", error);
+    tasksError = "Tâches indisponibles";
+  }
+
+  const totalPipelineItems = pipeline.leads + pipeline.inProgress + pipeline.proposals;
+  const priorityClass: Record<string, string> = {
+    high: "bg-red-100 text-red-700 border-red-200",
+    medium: "bg-amber-100 text-amber-700 border-amber-200",
+    low: "bg-slate-100 text-slate-700 border-slate-200",
+  };
 
   return (
     <div className="flex flex-col gap-8">
       <div>
-        <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Bonjour Mehdi 👋</h1>
-        <p className="text-slate-500 mt-1">{displayDate}</p>
+        <h1 className="text-3xl font-bold tracking-tight text-slate-900">Bonjour Mehdi 👋</h1>
+        <p className="mt-1 text-slate-500">{displayDate}</p>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        {/* Left Column */}
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <div className="flex flex-col gap-6">
-          {/* Section 1: Draft LinkedIn */}
           <Card className="border-slate-200 shadow-sm">
-            <CardHeader className="pb-3 flex flex-row items-center justify-between">
-              <div>
-                <CardTitle className="text-lg font-semibold text-slate-900">Draft LinkedIn du jour</CardTitle>
-                <CardDescription>Ton brouillon prêt à être publié</CardDescription>
-              </div>
-              <Badge variant="secondary" className="bg-slate-100 text-slate-500">Bientôt</Badge>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg font-semibold text-slate-900">Draft LinkedIn du jour</CardTitle>
+              <CardDescription>Ton brouillon prêt à publier</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="bg-slate-50 rounded-md p-6 text-center border border-dashed border-slate-200">
-                <p className="text-slate-500 text-sm">
-                  Aucun draft disponible — l'agent LinkedIn sera activé en semaine 3
-                </p>
+              <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
+                <p className="text-sm text-slate-500">Agent LinkedIn pas encore activé</p>
               </div>
             </CardContent>
           </Card>
 
-          {/* Section 2: Pipeline CRM */}
           <Card className="border-slate-200 shadow-sm">
             <CardHeader className="pb-3">
-              <CardTitle className="text-lg font-semibold text-slate-900">Pipeline</CardTitle>
-              <CardDescription>Suivi des opportunités</CardDescription>
+              <CardTitle className="text-lg font-semibold text-slate-900">Tâches du jour</CardTitle>
+              <CardDescription>Priorités opérationnelles du matin</CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
-                <div className="flex flex-col">
-                  <span className="text-sm font-medium text-slate-500">Leads</span>
-                  <span className="text-2xl font-bold text-slate-900">0</span>
-                </div>
-                <div className="flex flex-col">
-                  <span className="text-sm font-medium text-slate-500">En cours</span>
-                  <span className="text-2xl font-bold text-slate-900">0</span>
-                </div>
-                <div className="flex flex-col">
-                  <span className="text-sm font-medium text-slate-500">Propositions</span>
-                  <span className="text-2xl font-bold text-slate-900">0</span>
-                </div>
-                <div className="flex flex-col">
-                  <span className="text-sm font-medium text-slate-500">CA ce mois</span>
-                  <span className="text-2xl font-bold text-green-600">0 €</span>
-                </div>
-              </div>
-              <div className="bg-blue-50 text-blue-700 rounded-md p-3 text-sm flex items-start gap-2 border border-blue-100">
-                <MessageSquare className="w-5 h-5 flex-shrink-0" />
-                <p>Commence par dire "j'ai un nouveau lead..." dans le Chat IA</p>
-              </div>
+            <CardContent className="space-y-2">
+              {tasksError ? <p className="text-sm text-slate-500">{tasksError}</p> : null}
+              {!tasksError && todayTasks.length === 0 ? (
+                <p className="text-sm text-slate-500">Rien à faire — ton business tourne tout seul 🎉</p>
+              ) : null}
+              {!tasksError &&
+                todayTasks.map((task, index) => (
+                  <div key={`${task.type}-${index}`} className="rounded-md border border-slate-200 bg-white p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium text-slate-900">{task.title}</p>
+                      <Badge className={priorityClass[task.priority]}>{task.priority}</Badge>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">{task.subtitle}</p>
+                  </div>
+                ))}
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-lg font-semibold text-slate-900">
+                <Youtube className="h-5 w-5 text-red-500" />
+                YouTube
+              </CardTitle>
+              <CardDescription>Abonnés, vues 30 jours, dernières vidéos</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {youtubeError || !youtubeData ? (
+                <p className="text-sm text-slate-500">Données YouTube indisponibles</p>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-sm text-slate-500">Abonnés</p>
+                      <p className="text-2xl font-bold text-slate-900">
+                        {youtubeData.channel.subscriberCount.toLocaleString("fr-FR")}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-slate-500">Vues 30 jours</p>
+                      <p className="text-2xl font-bold text-slate-900">
+                        {youtubeData.viewsLast30Days.toLocaleString("fr-FR")}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    {youtubeData.latestVideos.map((video) => (
+                      <div key={video.id} className="rounded-md border border-slate-200 bg-white p-3">
+                        <p className="text-sm font-medium text-slate-900">{video.title}</p>
+                        <p className="text-xs text-slate-500">
+                          {video.views.toLocaleString("fr-FR")} vues •{" "}
+                          {new Date(video.publishedAt).toLocaleDateString("fr-FR")}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-lg font-semibold text-slate-900">
+                <Linkedin className="h-5 w-5 text-blue-600" />
+                LinkedIn
+              </CardTitle>
+              <CardDescription>3 derniers posts et engagement</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {linkedinError ? <p className="text-sm text-slate-500">Données LinkedIn indisponibles</p> : null}
+              {!linkedinError && linkedinPosts.length === 0 ? (
+                <p className="text-sm text-slate-500">Aucun post LinkedIn disponible</p>
+              ) : null}
+              {!linkedinError &&
+                linkedinPosts.map((post) => (
+                  <div key={post.id} className="rounded-md border border-slate-200 bg-white p-3">
+                    <p className="text-sm text-slate-900">{post.text || "Post sans texte"}</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      👍 {post.likes} • 💬 {post.comments} • 🔁 {post.shares}
+                    </p>
+                  </div>
+                ))}
             </CardContent>
           </Card>
         </div>
 
-        {/* Right Column */}
         <div className="flex flex-col gap-6">
-          {/* Section 3: Métriques Contenu */}
           <Card className="border-slate-200 shadow-sm">
             <CardHeader className="pb-3">
-              <CardTitle className="text-lg font-semibold text-slate-900">Contenu</CardTitle>
-              <CardDescription>Sources synchronisées</CardDescription>
+              <CardTitle className="text-lg font-semibold text-slate-900">Pipeline</CardTitle>
+              <CardDescription>Métriques commerciales du jour</CardDescription>
             </CardHeader>
-            <CardContent className="flex flex-col gap-4">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {/* YouTube */}
-                <div className="border border-slate-200 rounded-lg p-4 flex flex-col gap-2 relative">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Youtube className="w-5 h-5 text-red-500" />
-                      <span className="font-medium text-slate-900">YouTube</span>
-                    </div>
-                    {youtubeStatus ? (
-                      youtubeStatus.status === 'success' ? 
-                        <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 border-none">Actif</Badge> :
-                        <Badge className="bg-red-100 text-red-700 hover:bg-red-100 border-none">Erreur</Badge>
-                    ) : (
-                      <Badge className="bg-slate-100 text-slate-500 hover:bg-slate-100 border-none">Inactif</Badge>
-                    )}
+            <CardContent>
+              {pipelineError ? <p className="text-sm text-slate-500">{pipelineError}</p> : null}
+              {!pipelineError && totalPipelineItems === 0 && pipeline.wonThisMonthRevenue === 0 ? (
+                <div className="flex items-start gap-2 rounded-md border border-blue-100 bg-blue-50 p-3 text-sm text-blue-700">
+                  <MessageSquare className="h-5 w-5 shrink-0" />
+                  <p>Aucun deal — commence par le Chat IA</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm text-slate-500">Leads</p>
+                    <p className="text-2xl font-bold text-slate-900">{pipeline.leads}</p>
                   </div>
-                  <div className="mt-2">
-                    <p className="text-2xl font-bold text-slate-900">{youtubeStatus?.items_processed || 0}</p>
-                    <p className="text-xs text-slate-500">vidéos syncées</p>
+                  <div>
+                    <p className="text-sm text-slate-500">Deals en cours</p>
+                    <p className="text-2xl font-bold text-slate-900">{pipeline.inProgress}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-slate-500">Propositions</p>
+                    <p className="text-2xl font-bold text-slate-900">{pipeline.proposals}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-slate-500">CA gagné ce mois</p>
+                    <p className="text-2xl font-bold text-emerald-600">
+                      {pipeline.wonThisMonthRevenue.toLocaleString("fr-FR")} €
+                    </p>
                   </div>
                 </div>
-
-                {/* Notion */}
-                <div className="border border-slate-200 rounded-lg p-4 flex flex-col gap-2 relative">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <FileText className="w-5 h-5 text-slate-700" />
-                      <span className="font-medium text-slate-900">Notion</span>
-                    </div>
-                    {notionStatus ? (
-                      notionStatus.status === 'success' ? 
-                        <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 border-none">Actif</Badge> :
-                        <Badge className="bg-red-100 text-red-700 hover:bg-red-100 border-none">Erreur</Badge>
-                    ) : (
-                      <Badge className="bg-slate-100 text-slate-500 hover:bg-slate-100 border-none">Inactif</Badge>
-                    )}
-                  </div>
-                  <div className="mt-2">
-                    <p className="text-2xl font-bold text-slate-900">{notionStatus?.items_processed || 0}</p>
-                    <p className="text-xs text-slate-500">pages syncées</p>
-                  </div>
-                </div>
-
-                {/* LinkedIn */}
-                <div className="border border-slate-200 rounded-lg p-4 flex flex-col gap-2 relative">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Linkedin className="w-5 h-5 text-blue-600" />
-                      <span className="font-medium text-slate-900">LinkedIn</span>
-                    </div>
-                    {linkedinStatus ? (
-                      linkedinStatus.status === 'success' ? 
-                        <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 border-none">Actif</Badge> :
-                        <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100 border-none whitespace-nowrap">En attente</Badge>
-                    ) : (
-                      <Badge className="bg-slate-100 text-slate-500 hover:bg-slate-100 border-none">Inactif</Badge>
-                    )}
-                  </div>
-                  <div className="mt-2">
-                    <p className="text-2xl font-bold text-slate-900">{linkedinStatus?.items_processed || 0}</p>
-                    <p className="text-xs text-slate-500">posts syncés</p>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="text-xs text-slate-500 mt-2 flex justify-end">
-                Dernière sync : {lastSyncDate}
-              </div>
+              )}
             </CardContent>
           </Card>
 
-          {/* Section 4: Mémoire Business */}
-          <Card className="border-slate-200 shadow-sm flex-1">
+          <Card className="border-slate-200 shadow-sm">
             <CardHeader className="pb-3">
-              <CardTitle className="text-lg font-semibold text-slate-900 flex items-center gap-2">
-                <Database className="w-5 h-5 text-indigo-500" />
-                Mémoire Business
+              <CardTitle className="flex items-center gap-2 text-base font-semibold text-slate-900">
+                <Database className="h-4 w-4 text-indigo-500" />
+                Mémoire BML
               </CardTitle>
-              <CardDescription>Cerveau du système BML</CardDescription>
+              <CardDescription className="text-xs">Contexte business disponible</CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="flex flex-wrap gap-x-6 gap-y-4 mb-6">
-                <div className="flex flex-col">
-                  <span className="text-sm font-medium text-slate-500">Faits actifs</span>
-                  <span className="text-2xl font-bold text-slate-900">{summary.facts}</span>
-                </div>
-                <div className="flex flex-col">
-                  <span className="text-sm font-medium text-slate-500">Chunks vectorisés</span>
-                  <span className="text-2xl font-bold text-slate-900">{summary.memories}</span>
-                </div>
-                <div className="flex flex-col">
-                  <span className="text-sm font-medium text-slate-500">Entités</span>
-                  <span className="text-2xl font-bold text-slate-900">{summary.entities}</span>
-                </div>
+            <CardContent className="space-y-4">
+              <div className="flex flex-wrap gap-4 text-sm">
+                <Badge variant="secondary" className="bg-slate-100 text-slate-700">
+                  Faits: {memory.facts}
+                </Badge>
+                <Badge variant="secondary" className="bg-slate-100 text-slate-700">
+                  Chunks: {memory.chunks}
+                </Badge>
+                <Badge variant="secondary" className="bg-slate-100 text-slate-700">
+                  Entités: {memory.entities}
+                </Badge>
               </div>
-
-              <div className="mt-4">
-                <form action="/api/memory/search" method="POST" className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <Input 
-                    name="query" 
-                    placeholder="Chercher dans la mémoire (ex: offre principale, process de vente...)" 
-                    className="pl-9 bg-slate-50 border-slate-200 focus-visible:ring-indigo-500"
-                  />
-                  {/* Note: This is just a UI placeholder for the form, actual search would need client-side handling to show results here */}
-                </form>
-              </div>
+              <form action="/api/memory/search" method="POST" className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Input
+                  name="query"
+                  placeholder="Recherche sémantique (ex: offre principale, objections clients...)"
+                  className="border-slate-200 bg-slate-50 pl-9"
+                />
+              </form>
             </CardContent>
           </Card>
         </div>

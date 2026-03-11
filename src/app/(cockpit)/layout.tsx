@@ -7,7 +7,6 @@ import {
   Settings, 
   Menu 
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 
 export default function CockpitLayout({
@@ -48,13 +47,13 @@ export default function CockpitLayout({
             <span>Drafts</span>
           </Link>
           
-          <div className="flex items-center justify-between px-3 py-2 rounded-md text-slate-500 cursor-not-allowed">
-            <div className="flex items-center gap-3">
-              <BarChart3 className="w-5 h-5" />
-              <span>Pipeline</span>
-            </div>
-            <Badge variant="secondary" className="bg-slate-800 text-slate-400 border-none text-[10px] px-1.5 h-4">Bientôt</Badge>
-          </div>
+          <Link 
+            href="/pipeline" 
+            className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-slate-800 transition-colors"
+          >
+            <BarChart3 className="w-5 h-5" />
+            <span>Pipeline</span>
+          </Link>
           
           <div className="my-4">
             <Separator className="bg-slate-800" />
