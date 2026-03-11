@@ -23,6 +23,11 @@ type UnipilePost = {
   attachments?: unknown[];
 };
 
+type UnipileOwnProfile = {
+  provider_id?: string;
+  public_identifier?: string;
+};
+
 async function getOrCreateSourceConnectionId(): Promise<string> {
   const { data: existing, error: existingError } = await (supabase as any)
     .from('source_connections')
@@ -84,6 +89,35 @@ function resolveCreatedAt(post: UnipilePost): number {
   return Date.now();
 }
 
+function buildIdentifierCandidates(configuredIdentifier: string | undefined, profile: UnipileOwnProfile | null): string[] {
+  const values = [configuredIdentifier, profile?.provider_id, profile?.public_identifier];
+  const normalized = values
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+    .filter((value) => value.length > 0);
+
+  return Array.from(new Set(normalized));
+}
+
+function formatUnipileError(error: unknown): string {
+  const unknownError = error as {
+    message?: string;
+    body?: { status?: number; type?: string; title?: string; detail?: string };
+  };
+
+  const message = unknownError?.message ?? '';
+  const body = unknownError?.body;
+  if (!body) {
+    return message || 'Unknown Unipile error';
+  }
+
+  const details = [body.status, body.type, body.title, body.detail].filter(Boolean).join(' | ');
+  if (message && details) {
+    return `${message} (${details})`;
+  }
+
+  return details || message || 'Unknown Unipile error';
+}
+
 export async function syncLinkedIn(): Promise<ConnectorResult> {
   const startedAt = Date.now();
   let syncRunId: string | null = null;
@@ -95,10 +129,26 @@ export async function syncLinkedIn(): Promise<ConnectorResult> {
 
   try {
     const accountId = process.env.UNIPILE_ACCOUNT_ID;
-    const identifier = process.env.UNIPILE_IDENTIFIER;
+    const configuredIdentifier = process.env.UNIPILE_IDENTIFIER;
 
-    if (!accountId || !identifier) {
-      throw new Error('Missing env vars: UNIPILE_ACCOUNT_ID, UNIPILE_IDENTIFIER');
+    if (!accountId) {
+      throw new Error('Missing env var: UNIPILE_ACCOUNT_ID');
+    }
+
+    let ownProfile: UnipileOwnProfile | null = null;
+    try {
+      const profile = await (unipileClient as any).users.getOwnProfile(accountId);
+      ownProfile = {
+        provider_id: profile?.provider_id,
+        public_identifier: profile?.public_identifier,
+      };
+    } catch (error) {
+      errorLog.push({ message: `Failed to load own profile: ${formatUnipileError(error)}` });
+    }
+
+    const identifierCandidates = buildIdentifierCandidates(configuredIdentifier, ownProfile);
+    if (identifierCandidates.length === 0) {
+      throw new Error('Unable to resolve LinkedIn identifier. Define UNIPILE_IDENTIFIER or check account profile access.');
     }
 
     const sourceConnectionId = await getOrCreateSourceConnectionId();
@@ -118,12 +168,29 @@ export async function syncLinkedIn(): Promise<ConnectorResult> {
 
     syncRunId = createdSyncRun.id;
     const lastCursor = await getLastCursor(sourceConnectionId);
+    let postsResponse: { items?: UnipilePost[] } | null = null;
+    const identifierErrors: Array<{ identifier: string; message: string }> = [];
 
-    const postsResponse = await (unipileClient as any).users.getAllPosts({
-      account_id: accountId,
-      identifier,
-      limit: 100,
-    });
+    for (const identifier of identifierCandidates) {
+      try {
+        postsResponse = await (unipileClient as any).users.getAllPosts({
+          account_id: accountId,
+          identifier,
+          limit: 100,
+        });
+        break;
+      } catch (error) {
+        identifierErrors.push({ identifier, message: formatUnipileError(error) });
+      }
+    }
+
+    if (!postsResponse) {
+      throw new Error(
+        `Unable to fetch LinkedIn posts with tested identifiers: ${identifierErrors
+          .map((attempt) => `${attempt.identifier}: ${attempt.message}`)
+          .join(' || ')}`,
+      );
+    }
 
     const posts: UnipilePost[] = postsResponse?.items ?? [];
 

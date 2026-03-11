@@ -1,0 +1,154 @@
+# ROADMAP COCKPIT V1 — FIGÉE (11 mars 2026)
+
+**STATUT : FIGÉ — Ne pas modifier sans accord explicite de Mehdi.**
+
+**Auteur** : Claude CTO (session 11 mars 2026)
+
+**Décision validée** : CRM hybride (Option C — chat IA + interface manuelle dans le cockpit)
+
+---
+
+## 0. Contexte de cette roadmap
+
+Ce document remplace la Bible cockpit MVP comme source de vérité pour les écrans et features du cockpit. L'architecture technique et le backend BML restent décrits dans les docs existants. Ce document ne concerne QUE le frontend cockpit et ses fonctionnalités.
+
+Toute modification de scope doit passer par Mehdi. Windsurf et tout agent IA lisent ce document avant de coder.
+
+---
+
+## 1. Les 5 écrans du cockpit
+
+### Écran 1 — "Aujourd'hui" (accueil du matin)
+
+Ce que Mehdi voit en ouvrant le cockpit. Objectif : en 30 secondes, savoir où en est le business.
+
+**Bloc 1 — Draft LinkedIn du jour**
+
+Draft généré par l'agent IA la nuit. Texte complet, sources citées, style identifié. Boutons : Valider / Éditer / Regénérer. Tant que l'agent n'est pas actif : message placeholder "Agent LinkedIn pas encore activé".
+
+**Bloc 2 — Métriques YouTube**
+
+Source : YouTube Analytics API (connectée via Google Cloud Console — à vérifier par audit Windsurf). Données affichées : dernière vidéo publiée (titre + date), vues totales 30 derniers jours, nouveaux abonnés ce mois, performance dernière vidéo (vues, likes, commentaires).
+
+**Bloc 3 — Métriques LinkedIn**
+
+Source : Unipile (trial expire ~16 mars 2026). Données affichées : derniers posts publiés, vues/likes/commentaires par post, cadence de publication (réel vs objectif). Fallback si Unipile expire : données BML ingérées (contenu posts) sans analytics temps réel.
+
+**Bloc 4 — Pipeline (résumé)**
+
+Source : CRM Supabase (tables contacts, deals, activities). Données affichées : nombre de leads actifs, deals en cours, propositions envoyées, CA gagné ce mois (EUR), prochaines relances avec dates. C'est un résumé — le détail est dans l'écran Pipeline.
+
+**Bloc 5 — Mémoire Business (discret)**
+
+Compteur léger (faits actifs, chunks, entités) + barre de recherche sémantique. Pas en position dominante — c'est un outil, pas une métrique business.
+
+---
+
+### Écran 2 — "Chat IA" (copilote)
+
+Le coeur du système. Claude API en streaming via Vercel AI SDK v6, branché sur la BML pour le contexte business.
+
+**Capacité 1 — Mémoire business**
+
+Exemples : "Résume ma stratégie contenu des 3 derniers mois", "Prépare un brief pour mon appel avec Sophie", "Écris un post sur le storytelling en IA".
+
+**Capacité 2 — CRM conversationnel**
+
+Exemple : "J'ai eu un appel avec Sophie de Digitale, intéressée par Machine à Revenus, on se rappelle jeudi" — le chat crée le contact + le deal + la prochaine action automatiquement.
+
+**Les 6 outils CRM (tools Claude) :**
+
+- create_contact(name, company?, source?, notes?)
+- create_deal(contact_name, offer, amount?, status?)
+- update_deal(contact_name, status?, next_action?, next_action_date?, amount?)
+- log_activity(contact_name, type, description)
+- get_pipeline_summary()
+- get_overdue_actions()
+
+**Garde-fous :** fuzzy matching avant création (pas de doublons), confirmation sur cas ambigus, jamais de suppression sans demande explicite.
+
+---
+
+### Écran 3 — "Pipeline" (CRM hybride)
+
+Remplace l'onglet "Pipeline — Bientôt" actuel.
+
+**Vue liste** (pas kanban pour le MVP). Colonnes : nom, entreprise, offre, montant, statut, prochaine action, date prochaine action. Clic sur une ligne pour éditer inline. Bouton "+" pour ajouter un lead manuellement. Filtre par statut : lead / qualified / call_scheduled / proposal_sent / won / lost.
+
+**Alimentation double :** le chat IA crée et met à jour les deals automatiquement, ET édition manuelle possible dans cette vue.
+
+**Évolution future :** Fathom se branche via webhook — quand un call se termine, crée une activité avec le transcript résumé.
+
+---
+
+### Écran 4 — "Drafts" (file d'attente contenu)
+
+Liste de tous les drafts LinkedIn générés par l'agent. Chaque draft affiche : texte complet, sources (vidéo YouTube, article news), style (storytelling / opinion / éducatif / behind-the-scenes), boutons Valider / Éditer / Supprimer / Regénérer dans un autre style.
+
+Quand validé : copie dans le presse-papier + deep link LinkedIn. Publication via Unipile si fonctionnel (sinon fallback copier-coller).
+
+Cet écran devient utile quand l'agent LinkedIn est actif (étape 6).
+
+---
+
+### Écran 5 — "Paramètres"
+
+Connexions API : statut YouTube API, statut Unipile/LinkedIn, statut Tavily, clés API Claude/OpenAI. Style guide agent LinkedIn (éditable). Budget API / compteur de coûts.
+
+Pas prioritaire — dernière étape.
+
+---
+
+## 2. Ordre d'exécution (séquentiel strict)
+
+| # | Tâche | Dépend de | Livrable |
+| --- | --- | --- | --- |
+| 1 | Fixer erreur sync_runs + nettoyer le front actuel | Accès repo | Build propre sans erreurs |
+| 2 | Chat IA fonctionnel (Claude streaming + contexte BML) | Étape 1 | Chat qui répond avec contexte business |
+| 3 | Outils CRM dans le chat (6 tools) | Étape 2 | Chat qui crée contacts/deals |
+| 4 | Écran Pipeline (vue liste + édition manuelle + ajout) | Étape 3 | CRM hybride utilisable |
+| 5 | Écran Aujourd'hui refait (métriques business réelles) | YouTube API vérifiée + Unipile vérifiée + Pipeline actif | Dashboard utile le matin |
+| 6 | Agent LinkedIn (cron Tavily + génération drafts + style guide) | Chat + BML fonctionnels | Drafts générés chaque nuit |
+| 7 | Écran Drafts fonctionnel | Agent LinkedIn actif | Validation/édition des drafts |
+
+---
+
+## 3. Décision CRM — Option C validée
+
+**Rejeté :** Option A (CRM Notion connecté) — sync bidirectionnelle trop complexe et fragile.
+
+**Rejeté :** Option B (chat seul sans interface manuelle) — pas assez flexible pour les micro-actions.
+
+**Validé :** Option C (CRM hybride) — chat IA pour les interactions riches + vue liste manuelle pour les actions simples.
+
+Les tables Supabase (contacts, deals, activities) sont déjà créées. Le schéma reste tel que défini dans la Bible cockpit MVP.
+
+---
+
+## 4. Ce qu'on ne fait PAS dans le MVP
+
+- Pas de vue kanban drag-and-drop
+- Pas de calendrier intégré (V1 — Google Calendar)
+- Pas de multi-utilisateur
+- Pas de posting automatique sans validation humaine
+- Pas de sync Notion bidirectionnelle pour le CRM
+- Pas de LangGraph / CrewAI / n8n
+- Pas de formulaires complexes (le chat + la vue liste suffisent)
+
+---
+
+## 5. Prérequis techniques à vérifier (prompts audit Windsurf)
+
+1. YouTube Analytics API — vérifier que la connexion Google Cloud Console fonctionne et que l'app peut récupérer les stats de la chaîne
+2. Unipile — vérifier l'état du trial, les endpoints disponibles (analytics posts LinkedIn), et la date d'expiration exacte
+3. Table sync_runs — vérifier si elle existe en base Supabase (erreur console actuelle)
+4. État du build actuel — npm run build + npm run test
+
+---
+
+## 6. Connexions externes prévues
+
+- **MCP Server** (fait) — Claude Desktop se branche sur la BML
+- **ChatGPT Custom GPT** (V1) — même API routes que le MCP
+- **Fathom** (V1) — webhook post-call pour enrichir le CRM
+- **Google Calendar** (V1) — lecture seule pour les tâches du jour

@@ -14,6 +14,7 @@ const { mockSupabase, mockUnipile } = vi.hoisted(() => ({
   mockUnipile: {
     users: {
       getAllPosts: vi.fn(),
+      getOwnProfile: vi.fn(),
     },
   },
 }));
@@ -144,6 +145,10 @@ describe('syncLinkedIn', () => {
     process.env.UNIPILE_ACCESS_TOKEN = 'access-token';
     process.env.UNIPILE_ACCOUNT_ID = 'account-id';
     process.env.UNIPILE_IDENTIFIER = 'me';
+    mockUnipile.users.getOwnProfile.mockResolvedValue({
+      provider_id: 'provider-id',
+      public_identifier: 'me',
+    });
   });
 
   it('sync avec 2 posts crée 2 raw_documents et 1 sync_run', async () => {
@@ -181,5 +186,53 @@ describe('syncLinkedIn', () => {
     expect(result.error).toContain('Unipile is down');
     expect(state.syncRuns[0].error_log).toBeDefined();
     expect(Array.isArray(state.syncRuns[0].error_log)).toBe(true);
+  });
+
+  it('fallback sur provider_id quand public_identifier retourne invalid_recipient', async () => {
+    const state = createSupabaseState();
+    wireSupabaseMock(state);
+    mockUnipile.users.getAllPosts.mockImplementation(({ identifier }: { identifier: string }) => {
+      if (identifier === 'me') {
+        return Promise.reject({
+          message: '',
+          body: {
+            status: 422,
+            type: 'errors/invalid_recipient',
+            title: 'Recipient cannot be reached',
+            detail: 'invalid recipient',
+          },
+        });
+      }
+
+      return Promise.resolve({
+        items: [
+          {
+            social_id: 'urn:li:share:fallback',
+            text: 'Fallback post',
+            parsed_datetime: '2026-03-03T10:00:00Z',
+            visibility: 'PUBLIC',
+            reaction_counter: 1,
+            comment_counter: 0,
+            repost_counter: 0,
+            attachments: [],
+          },
+        ],
+      });
+    });
+
+    const result = await syncLinkedIn();
+
+    expect(result.success).toBe(true);
+    expect(result.items_processed).toBe(1);
+    expect(state.rawDocuments.size).toBe(1);
+    expect(mockUnipile.users.getAllPosts).toHaveBeenCalledTimes(2);
+    expect(mockUnipile.users.getAllPosts).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ identifier: 'me' }),
+    );
+    expect(mockUnipile.users.getAllPosts).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ identifier: 'provider-id' }),
+    );
   });
 });

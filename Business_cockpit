@@ -1,0 +1,227 @@
+# Business Cockpit — Bible produit MVP
+
+Ce document est la **source de vérité** pour le cockpit business. Tout agent IA (Windsurf, Claude) le lit avant de coder. Tout changement de scope passe par ce document.
+
+**Statut** : VALIDÉ — 10 mars 2026
+
+**Auteur** : Claude CTO + Mehdi
+
+---
+
+## 1. Ce qu'on construit
+
+Un cockpit personnel qui pilote le business de Mehdi au quotidien. Pas un dashboard passif — un système qui travaille pour lui et présente le résultat chaque matin.
+
+**Utilisateur cible (validation)** : Mehdi Benchaffi — consultant/créateur B2B, chaîne YouTube "Mehdi Benchaffi", offre Machine à Revenus à 3000€, cible les "experts de l'ombre" (introvertis compétents qui détestent prospecter).
+
+**Le problème résolu** : trop de temps perdu à créer du contenu LinkedIn, chercher des idées, se rappeler où en sont les clients, suivre le pipeline. L'info est éparpillée entre YouTube, Notion, la tête de Mehdi. Le cockpit centralise tout et l'agent fait le travail répétitif.
+
+---
+
+## 2. Les 3 north-stars
+
+- **Consistency** : publier à cadence régulière sans effort créatif quotidien (1 post LinkedIn tous les 2-3 jours, drafts toujours prêts)
+- **Conversion** : transformer l'attention en appels bookés et clients payants via un pipeline léger et des relances automatiques
+- **Leverage** : réduire le temps passé à chercher ses propres infos en rendant la BML interrogeable et actionnable
+
+---
+
+## 3. Les 3 écrans du MVP
+
+### Écran 1 — "Aujourd'hui" (accueil)
+
+Ce que Mehdi voit en ouvrant le cockpit le matin :
+
+- **1 draft LinkedIn à valider** : généré par l'agent pendant la nuit. Texte complet, sources citées, style identifié. Boutons : Valider / Éditer / Supprimer / Regénérer
+- **3 tâches prioritaires du jour** : dont les relances clients à faire. Générées depuis le pipeline + le calendrier (V1) + la mémoire BML. Chaque tâche a une raison ("suggéré parce que...")
+- **Résumé pipeline** : X leads actifs, Y propositions envoyées, Z€ de CA ce mois. Alimenté par le mini-CRM conversationnel
+- **Métriques contenu** : dernière vidéo YouTube (vues, engagement), dernier post LinkedIn (likes, commentaires), cadence de publication (objectif vs réel)
+
+### Écran 2 — "Chat IA" (copilote)
+
+Une fenêtre de conversation avec Claude, branchée sur la mémoire BML + le pipeline commercial.
+
+**Deux capacités :**
+
+- **Mémoire business** : "Résume ma stratégie contenu des 3 derniers mois", "Prépare un brief pour mon appel avec Sophie", "Écris un post sur le storytelling en IA"
+- **Pipeline commercial** : "J'ai eu un appel avec Sophie de Digitale, intéressée par Machine à Revenus, on se rappelle jeudi" → le chat crée le contact + le deal + la prochaine action automatiquement. "Sophie a signé, 3000€" → met à jour le pipeline.
+
+**Le CRM est alimenté par la conversation, pas par des formulaires.** Zéro friction de saisie.
+
+### Écran 3 — "Drafts" (file d'attente contenu)
+
+Liste de tous les drafts LinkedIn générés par l'agent.
+
+Chaque draft affiche :
+
+- Le texte complet
+- Les sources (quelle vidéo YouTube, quel article news)
+- Le style (storytelling / opinion tranchée / éducatif / behind-the-scenes)
+- Boutons : Valider / Éditer / Supprimer / Regénérer dans un autre style
+
+Quand validé : copie dans le presse-papier + deep link LinkedIn, ou publication via Unipile si fonctionnel.
+
+---
+
+## 4. L'agent LinkedIn autonome
+
+### Déclenchement
+
+Cron quotidien à 6h UTC via Vercel Cron.
+
+### Workflow
+
+1. Récupère les 3 dernières vidéos YouTube via BML API (`/api/memory/search`)
+2. Récupère les derniers posts LinkedIn via BML API (pour éviter les répétitions)
+3. Cherche 5 news récentes du secteur via **Tavily API** (IA, RevOps, storytelling B2B, solopreneuriat)
+4. Choisit un angle + un style (rotation entre storytelling, opinion, éducatif, behind-the-scenes)
+5. Génère un draft avec Claude en utilisant le style guide
+6. Stocke le draft en base (table `linkedin_drafts`)
+7. Disponible dans l'écran "Aujourd'hui" le matin
+
+### Style guide de l'agent
+
+- **Ton** : direct, pas corporate. Comme un message à un pote entrepreneur
+- **Hook** : première ligne percutante (question provocante, stat surprenante, ou phrase choc)
+- **Structure** : hook → histoire/contexte → leçon/insight → CTA
+- **CTA** (rotation) :
+    - Engagement : question ouverte ("Et toi, tu fais comment ?")
+    - Lead gen : lien vers ressource ("J'ai fait un guide sur...")
+    - Branding : réflexion personnelle ("C'est ce que j'ai appris en...")
+- **Signature** : "La bise,"
+- **Longueur** : 800-1500 caractères
+- **Interdits** : pas d'émojis en excès, pas de listes à puces (c'est LinkedIn pas un slide), pas de "dans cet article je vais vous expliquer"
+
+---
+
+## 5. Le mini-CRM conversationnel
+
+### Principe
+
+Pas de formulaires, pas de vue kanban. Le pipeline est alimenté par le chat IA. Tu parles à l'agent comme à un assistant humain, il structure les données derrière.
+
+### Tables Supabase
+
+**contacts**
+
+- id (uuid)
+- name (text)
+- company (text, nullable)
+- source (text : youtube, linkedin, referral, outbound, event, unknown)
+- notes (text, nullable)
+- created_at, updated_at
+
+**deals**
+
+- id (uuid)
+- contact_id (uuid → contacts)
+- offer (text : "Machine à Revenus", ou autre)
+- amount (number, nullable)
+- currency (text, default EUR)
+- status (text : lead, qualified, call_scheduled, proposal_sent, won, lost, churned)
+- next_action (text, nullable : "relancer jeudi", "envoyer proposition")
+- next_action_date (date, nullable)
+- created_at, updated_at
+
+**activities**
+
+- id (uuid)
+- deal_id (uuid → deals)
+- activity_type (text : call, email, message, note, meeting)
+- description (text)
+- created_at
+
+### Outils du chat IA (tools Claude)
+
+- `create_contact(name, company?, source?, notes?)` → crée un contact
+- `create_deal(contact_name, offer, amount?, status?)` → crée un deal (match contact par nom)
+- `update_deal(contact_name, status?, next_action?, next_action_date?, amount?)` → met à jour un deal
+- `log_activity(contact_name, type, description)` → log une interaction
+- `get_pipeline_summary()` → retourne le résumé pour le dashboard
+- `get_overdue_actions()` → retourne les relances en retard
+
+### Garde-fous
+
+- Match par nom approximatif avant de créer un doublon (Levenshtein ou fuzzy)
+- Demande confirmation pour les cas ambigus ("Tu parles de Sophie Martin ou Sophie Dupont ?")
+- Ne supprime jamais un contact/deal sans demander
+
+---
+
+## 6. Ce qu'on ne fait PAS dans le MVP
+
+- ❌ Calendrier intégré (V1 — Google Calendar read-only)
+- ❌ To-do automatique intelligente (V1 — suggestions depuis pipeline + mémoire)
+- ❌ Vue kanban drag-and-drop (V1 — si le CRM conversationnel ne suffit pas)
+- ❌ Multi-utilisateur
+- ❌ Posting automatique sans validation humaine (toujours human-in-the-loop)
+- ❌ Analytics LinkedIn avancées (V1)
+- ❌ Sync Notion bidirectionnelle pour le CRM
+- ❌ Formulaires de saisie (le chat est l'interface de saisie)
+
+---
+
+## 7. Stack technique
+
+| Couche | Techno | Rôle |
+| --- | --- | --- |
+| Framework | Next.js (App Router) — déjà en place | Full-stack |
+| UI | shadcn/ui + Tremor (charts) + Tailwind CSS | Design system cockpit |
+| Chat IA | Claude API (streaming) via Vercel AI SDK v6 | Copilote conversationnel |
+| Mémoire | BML — les 5 API routes existantes | Contexte business |
+| Pipeline CRM | Supabase (tables contacts, deals, activities) | Données commerciales |
+| News | Tavily API ($0.005/recherche) | Veille sectorielle |
+| Publication | Unipile (si fonctionnel) + copy-to-clipboard (fallback) | Posting LinkedIn |
+| Cron | Vercel Cron (déjà configuré) | Agent autonome quotidien |
+| Embeddings | OpenAI text-embedding-3-small (déjà en place) | Recherche sémantique |
+
+**Nouvelles dépendances à ajouter :** shadcn/ui, Tremor, Vercel AI SDK, Tavily SDK
+
+**Pas de LangGraph / CrewAI / n8n pour le MVP.** On les ajoutera quand on aura 3+ agents à coordonner.
+
+---
+
+## 8. Planning MVP (4-6 semaines)
+
+**Semaine 1** : Setup front-end (shadcn/ui, layout cockpit, écran Aujourd'hui avec données statiques depuis les API BML + tables CRM vides)
+
+**Semaine 2** : Chat IA (intégration Claude streaming via Vercel AI SDK + context build + outils CRM conversationnel)
+
+**Semaine 3** : Agent LinkedIn (cron quotidien + Tavily pour news + génération de drafts + écran Drafts)
+
+**Semaine 4** : Polish, tests, itérations basées sur l'usage réel de Mehdi
+
+---
+
+## 9. Risques et mitigations
+
+| Risque | Impact | Mitigation |
+| --- | --- | --- |
+| LinkedIn API via Unipile instable | Pas de posting direct | Fallback copy-to-clipboard. L'agent génère le draft, tu postes manuellement |
+| Oubli de parler au chat pour alimenter le CRM | Pipeline vide | L'agent demande chaque soir "Tu as eu des interactions clients aujourd'hui ?" |
+| Hallucinations dans les drafts LinkedIn | Contenu faux publié | Human-in-the-loop obligatoire. Chaque draft cite ses sources. Jamais de publication sans validation |
+| Tavily en panne | Pas de news dans les drafts | L'agent génère depuis les vidéos YouTube seules (mode dégradé) |
+| Coût API Claude/OpenAI | Facture surprenante | Compteur de coûts visible dans le cockpit. Alertes si dépassement budget hebdo |
+| CRM conversationnel trop imprécis | Doublons, données fausses | Fuzzy matching + confirmation systématique pour les cas ambigus |
+
+---
+
+## 10. Critères de succès du MVP
+
+- Mehdi ouvre le cockpit chaque matin et trouve un draft LinkedIn prêt à valider
+- Mehdi publie au moins 1 post tous les 3 jours avec moins de 15 min/jour d'effort
+- Mehdi utilise le chat pour alimenter son pipeline au lieu d'un fichier Excel ou Notion
+- Le pipeline affiche des données fiables (pas de doublons, pas de fantômes)
+- L'agent ne publie JAMAIS sans validation humaine
+
+---
+
+## 11. Évolutions V1 (après validation MVP)
+
+- Calendrier Google Calendar en lecture seule
+- To-do intelligente suggérée par l'IA
+- Analytics LinkedIn (engagement par post, tendances)
+- Vue pipeline visuelle (kanban simple)
+- Brief appel client automatique
+- Résumé hebdomadaire business automatique
+- LangGraph pour orchestration multi-agents

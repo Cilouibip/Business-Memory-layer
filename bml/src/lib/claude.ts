@@ -2,8 +2,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 
 const MODEL_MAP = {
-  haiku: 'claude-3-5-haiku-latest',
-  sonnet: 'claude-3-5-sonnet-latest',
+  haiku: 'claude-haiku-4-5-20251001',
+  sonnet: 'claude-sonnet-4-5-20250929',
 } as const;
 
 const BACKOFF_MS = [1000, 3000];

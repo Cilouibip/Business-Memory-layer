@@ -24,7 +24,9 @@ const { mockSupabase, mockNotionInstance } = vi.hoisted(() => ({
 
 vi.mock('../../src/lib/supabase', () => ({ supabase: mockSupabase }));
 vi.mock('@notionhq/client', () => ({
-  Client: vi.fn().mockImplementation(() => mockNotionInstance),
+  Client: vi.fn(function MockNotionClient() {
+    return mockNotionInstance;
+  }),
 }));
 
 function createSupabaseState(): SupabaseState {
@@ -153,10 +155,6 @@ describe('syncNotion', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.NOTION_TOKEN = 'notion-token';
-    vi.spyOn(global, 'setTimeout').mockImplementation((handler: TimerHandler) => {
-      if (typeof handler === 'function') handler();
-      return 0 as unknown as ReturnType<typeof setTimeout>;
-    });
   });
 
   it('sync avec 2 pages crée 2 raw_documents et 1 sync_run', async () => {
