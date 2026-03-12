@@ -30,6 +30,26 @@ export async function createTask(input: {
   workspace_id?: string;
   created_by?: string;
 }): Promise<Task> {
+  const workspaceId = input.workspace_id ?? 'personal';
+
+  // Guard d'idempotence: ne pas créer de doublon "todo" avec le même titre
+  const { data: existing, error: searchError } = await (supabase as any)
+    .from('tasks')
+    .select('*')
+    .eq('workspace_id', workspaceId)
+    .eq('title', input.title)
+    .eq('status', 'todo')
+    .limit(1)
+    .maybeSingle();
+
+  if (searchError) {
+    throw new Error(`Erreur vérification doublon: ${searchError.message}`);
+  }
+
+  if (existing) {
+    return existing as Task;
+  }
+
   const { data, error } = await (supabase as any)
     .from('tasks')
     .insert([
@@ -42,7 +62,7 @@ export async function createTask(input: {
         source_id: input.source_id ?? null,
         related_deal_id: input.related_deal_id ?? null,
         related_contact_id: input.related_contact_id ?? null,
-        workspace_id: input.workspace_id ?? 'personal',
+        workspace_id: workspaceId,
         created_by: input.created_by ?? 'system',
       },
     ])

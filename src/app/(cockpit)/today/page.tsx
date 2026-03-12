@@ -1,12 +1,25 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { MemorySearchForm } from "@/components/cockpit/MemorySearchForm";
+import { DraftFocusCard } from "@/components/cockpit/DraftFocusCard";
 import { SyncButton } from "@/components/cockpit/SyncButton";
-import { TodayTasks } from "@/components/cockpit/TodayTasks";
-import { Database, Linkedin, MessageSquare, Youtube } from "lucide-react";
-import { getContentCadence, getDashboardStats, getPipelineBusinessSummary, getTodayTasks, getWeeklyStats } from "@/lib/dashboardQueries";
-import { getAllVideos, getYouTubeBusinessSnapshot, type YouTubeVideoStats } from "@/lib/youtubeAnalytics";
+import { TodayTasksList } from "@/components/cockpit/TodayTasksList";
+import { KPICard } from "@/components/cockpit/KPICard";
+import { PipelineStackedBar } from "@/components/cockpit/PipelineStackedBar";
+import { YouTubeChart } from "@/components/cockpit/YouTubeChart";
+import { BmlMemorySearch } from "@/components/cockpit/BmlMemorySearch";
+import { ContentCadenceCard } from "@/components/cockpit/ContentCadenceCard";
+import { SyncStatusList } from "@/components/cockpit/SyncStatusList";
+import { BmlDigestionStateCard } from "@/components/cockpit/BmlDigestionStateCard";
+import { LatestInsightsCard } from "@/components/cockpit/LatestInsightsCard";
+import { CopilotCommandBar } from "@/components/cockpit/CopilotCommandBar";
+import { Button } from "@/components/ui/button";
+import { Plus, RefreshCw, PenTool } from "lucide-react";
+import Link from "next/link";
+import { getContentCadence, getDashboardStats, getPipelineBusinessSummary, getTodayTasks, getWeeklyStats, getBmlDigestionState, getLatestInsights } from "@/lib/dashboardQueries";
+import { getYouTubeBusinessSnapshot } from "@/lib/youtubeAnalytics";
 import { getAllLinkedInPosts, type LinkedInPostStats } from "@/lib/linkedinAnalytics";
+import { supabase } from "@/lib/supabase";
 
 export default async function TodayPage() {
   const today = new Date();
@@ -22,26 +35,29 @@ export default async function TodayPage() {
   const [
     statsResult,
     youtubeResult,
-    allVideosResult,
     linkedinResult,
     cadenceResult,
     weeklyResult,
     pipelineResult,
     tasksResult,
+    draftResult,
+    digestionResult,
+    insightsResult
   ] = await Promise.allSettled([
     getDashboardStats(),
     getYouTubeBusinessSnapshot(),
-    getAllVideos(),
     getAllLinkedInPosts(),
     getContentCadence(),
     getWeeklyStats(),
     getPipelineBusinessSummary(),
     getTodayTasks(),
+    (supabase as any).from('linkedin_drafts').select('*').eq('status', 'pending').order('created_at', { ascending: false }).limit(1),
+    getBmlDigestionState(),
+    getLatestInsights(3)
   ]);
 
   const stats = statsResult.status === 'fulfilled' ? statsResult.value : null;
   const youtubeData = youtubeResult.status === 'fulfilled' ? youtubeResult.value : null;
-  const allYoutubeVideos = allVideosResult.status === 'fulfilled' ? allVideosResult.value : [];
   const linkedinPosts = linkedinResult.status === 'fulfilled' ? linkedinResult.value : [];
   const cadence = cadenceResult.status === 'fulfilled' ? cadenceResult.value : null;
   const weeklyStats = weeklyResult.status === 'fulfilled' ? weeklyResult.value : null;
@@ -49,244 +65,156 @@ export default async function TodayPage() {
     pipelineResult.status === 'fulfilled'
       ? pipelineResult.value
       : { leads: 0, inProgress: 0, proposals: 0, wonThisMonthRevenue: 0 };
-  const todayTasks = tasksResult.status === 'fulfilled' ? tasksResult.value : [];
+  
+  const todayItems = tasksResult.status === 'fulfilled' ? tasksResult.value : [];
+  // Séparation Tâches / CRM
+  const todayTasks = todayItems.filter(t => t.type === 'task');
+  const todayCrmActions = todayItems.filter(t => t.type === 'deal_action');
+  
+  const pendingDraft = draftResult.status === 'fulfilled' ? draftResult.value.data?.[0] ?? null : null;
+  const digestionState = digestionResult.status === 'fulfilled' ? digestionResult.value : { ingested: 0, triaged: 0, canonicalized: 0, extractionFailed: 0 };
+  const insights = insightsResult.status === 'fulfilled' ? insightsResult.value : [];
+  
   const memory = stats ? { facts: stats.facts, chunks: stats.chunks, entities: stats.entities } : { facts: 0, chunks: 0, entities: 0 };
 
-  const youtubeError = youtubeResult.status === 'rejected' ? 'Données YouTube indisponibles' : null;
-  const linkedinError = linkedinResult.status === 'rejected' ? 'Données LinkedIn indisponibles' : null;
-  const pipelineError = pipelineResult.status === 'rejected' ? 'Données pipeline indisponibles' : null;
-  const tasksError = tasksResult.status === 'rejected' ? 'Tâches indisponibles' : null;
-
   const totalPipelineItems = pipeline.leads + pipeline.inProgress + pipeline.proposals;
-  const videoList = (allYoutubeVideos.length > 0 ? allYoutubeVideos : youtubeData?.latestVideos ?? []) as YouTubeVideoStats[];
-  const visibleVideos = videoList.slice(0, 3);
-  const hiddenVideos = videoList.slice(3);
-  const visibleLinkedInPosts = linkedinPosts.slice(0, 3) as LinkedInPostStats[];
-  const hiddenLinkedInPosts = linkedinPosts.slice(3) as LinkedInPostStats[];
+  
+  // Préparation données charts
   const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const linkedIn30Days = linkedinPosts.filter((post) => {
     const parsed = Date.parse(post.publishedAt);
     return !Number.isNaN(parsed) && parsed >= thirtyDaysAgo;
   });
   const linkedInLikes30d = linkedIn30Days.reduce((sum, post) => sum + post.likes, 0);
-  const linkedInComments30d = linkedIn30Days.reduce((sum, post) => sum + post.comments, 0);
-  const deltaSign = weeklyStats && weeklyStats.deltaPercent > 0 ? "+" : "";
+  
+  // Construction data chart YouTube avec de vraies données (Analytics API)
+  // Format attendu par le composant: { date: string, views: number }[]
+  const chartData = youtubeData?.dailyStats 
+    ? youtubeData.dailyStats.map((stat: any) => ({
+        date: new Date(stat.date).toLocaleDateString("fr-FR", { day: "2-digit", month: "short" }),
+        views: stat.views
+      }))
+    : [];
+
   return (
-    <div className="flex flex-col gap-8">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight text-slate-900">Bonjour Mehdi 👋</h1>
-        <p className="mt-1 text-slate-500">{displayDate}</p>
+    <div className="flex flex-col gap-8 pb-10">
+      {/* HEADER */}
+      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-50">Bonjour Mehdi 👋</h1>
+          <p className="mt-1 text-slate-500 dark:text-slate-400">{displayDate}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Link href="/tasks">
+            <Button variant="outline" size="sm" className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800">
+              <Plus className="mr-1.5 h-4 w-4" /> Tâche
+            </Button>
+          </Link>
+          <SyncButton />
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <div className="flex flex-col gap-6">
-          <Card className="border-slate-200 shadow-sm">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-lg font-semibold text-slate-900">Draft LinkedIn du jour</CardTitle>
-              <CardDescription>Ton brouillon prêt à publier</CardDescription>
+      {/* BARRE DE COMMANDE GLOBALE */}
+      <div className="w-full">
+        <CopilotCommandBar />
+      </div>
+
+      {/* LIGNE 1 : KPIs (4 colonnes) */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <KPICard 
+          title="CA Gagné (Mois)" 
+          value={`${pipeline.wonThisMonthRevenue.toLocaleString("fr-FR")} €`} 
+          className="border-indigo-100 bg-indigo-50/30 dark:border-indigo-900/30 dark:bg-indigo-950/20"
+        />
+        <KPICard 
+          title="Vues YouTube (30j)" 
+          value={youtubeData?.viewsLast30Days?.toLocaleString("fr-FR") || "0"} 
+          trend={youtubeData?.weeklyViews ? { 
+            value: Number(youtubeData.weeklyViews.deltaPercent.toFixed(1)), 
+            label: "vs 7j précédents" 
+          } : undefined}
+        />
+        <KPICard 
+          title="Engagement LinkedIn (30j)" 
+          value={linkedInLikes30d.toLocaleString("fr-FR")} 
+          subtitle="Likes cumulés"
+        />
+        <KPICard 
+          title="Tâches Restantes" 
+          value={todayTasks.length} 
+          subtitle="Pour aujourd'hui et en retard"
+          className={todayTasks.length > 0 ? "border-orange-100 bg-orange-50/30 dark:border-orange-900/30 dark:bg-orange-950/20" : ""}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="flex flex-col gap-6 lg:col-span-2">
+          {/* PIPELINE */}
+          <Card className="border-slate-200 shadow-sm dark:border-slate-800">
+            <CardHeader className="pb-3 bg-gradient-to-r from-transparent to-indigo-50/30 dark:to-indigo-950/10">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-lg font-semibold text-slate-900 dark:text-slate-100">Pipeline Commercial</CardTitle>
+                  <CardDescription>Deals actifs ({totalPipelineItems})</CardDescription>
+                </div>
+                <Link href="/pipeline">
+                  <Button variant="ghost" size="sm" className="text-indigo-600 dark:text-indigo-400">Gérer</Button>
+                </Link>
+              </div>
             </CardHeader>
             <CardContent>
-              <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
-                <p className="text-sm text-slate-500">Agent LinkedIn pas encore activé</p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-slate-200 shadow-sm">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-lg font-semibold text-slate-900">Tâches du jour</CardTitle>
-              <CardDescription>Priorités opérationnelles du matin</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {tasksError ? <p className="text-sm text-slate-500">{tasksError}</p> : null}
-              {!tasksError ? <TodayTasks initialTasks={todayTasks} /> : null}
-            </CardContent>
-          </Card>
-
-          <Card className="border-slate-200 shadow-sm">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-lg font-semibold text-slate-900">
-                <Youtube className="h-5 w-5 text-red-500" />
-                YouTube
-              </CardTitle>
-              <CardDescription>Abonnés, vues, cadence et toutes les vidéos</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {youtubeError || !youtubeData ? (
-                <p className="text-sm text-slate-500">Données YouTube indisponibles</p>
-              ) : (
-                <>
-                  <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-                    <div>
-                      <p className="text-sm text-slate-500">Abonnés</p>
-                      <p className="text-2xl font-bold text-slate-900">
-                        {youtubeData.channel.subscriberCount.toLocaleString("fr-FR")}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-slate-500">Vues 30 jours</p>
-                      <p className="text-2xl font-bold text-slate-900">
-                        {youtubeData.viewsLast30Days.toLocaleString("fr-FR")}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-slate-500">Nouveaux abonnés (7j)</p>
-                      <p className="text-2xl font-bold text-slate-900">
-                        {youtubeData.subscribersGainedLast7Days.toLocaleString("fr-FR")}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-slate-500">Vues cette semaine</p>
-                      <p className="text-2xl font-bold text-slate-900">
-                        {weeklyStats ? weeklyStats.thisWeekViews.toLocaleString("fr-FR") : "—"}
-                      </p>
-                    </div>
-                  </div>
-                  {weeklyStats ? (
-                    <p className="text-xs text-slate-500">
-                      {deltaSign}
-                      {weeklyStats.deltaPercent.toFixed(1)}% de vues cette semaine vs semaine dernière
-                    </p>
-                  ) : null}
-                  <div className="space-y-2">
-                    {visibleVideos.map((video) => (
-                      <div key={video.id} className="rounded-md border border-slate-200 bg-white p-3">
-                        <p className="text-sm font-medium text-slate-900">{video.title}</p>
-                        <p className="text-xs text-slate-500">
-                          {video.views.toLocaleString("fr-FR")} vues •{" "}
-                          {new Date(video.publishedAt).toLocaleDateString("fr-FR")}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                  {hiddenVideos.length > 0 ? (<details className="rounded-md border border-slate-200 bg-slate-50 p-3"><summary className="cursor-pointer text-sm font-medium text-slate-700">Voir toutes les vidéos ({allYoutubeVideos.length})</summary><div className="mt-3 space-y-2">{hiddenVideos.map((video) => (<div key={`${video.id}-all`} className="rounded-md border border-slate-200 bg-white p-3"><p className="text-sm font-medium text-slate-900">{video.title}</p><p className="text-xs text-slate-500">{video.views.toLocaleString("fr-FR")} vues • {video.likes.toLocaleString("fr-FR")} likes • {video.comments.toLocaleString("fr-FR")} commentaires</p></div>))}</div></details>) : null}
-                </>
+              <PipelineStackedBar 
+                leads={pipeline.leads} 
+                inProgress={pipeline.inProgress} 
+                proposals={pipeline.proposals} 
+                className="mb-6"
+              />
+              {todayCrmActions.length > 0 && (
+                <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+                  <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">Relances à faire aujourd'hui</h4>
+                  <TodayTasksList initialTasks={todayCrmActions} />
+                </div>
               )}
             </CardContent>
           </Card>
 
-          <Card className="border-slate-200 shadow-sm">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-lg font-semibold text-slate-900">
-                <Linkedin className="h-5 w-5 text-blue-600" />
-                LinkedIn
-              </CardTitle>
-              <CardDescription>Cadence, engagement 30 jours, tous les posts</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {linkedinError ? <p className="text-sm text-slate-500">Données LinkedIn indisponibles</p> : null}
-              {!linkedinError ? (
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm text-slate-500">Engagement likes (30j)</p>
-                    <p className="text-2xl font-bold text-slate-900">{linkedInLikes30d.toLocaleString("fr-FR")}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-slate-500">Commentaires (30j)</p>
-                    <p className="text-2xl font-bold text-slate-900">{linkedInComments30d.toLocaleString("fr-FR")}</p>
-                  </div>
+          {/* DRAFT LINKEDIN */}
+          <div>
+            <h2 className="mb-4 text-lg font-semibold text-slate-900 dark:text-slate-100">Action Recommandée</h2>
+            <DraftFocusCard initialDraft={pendingDraft ? { id: pendingDraft.id, content: pendingDraft.content, style: pendingDraft.style ?? null } : null} />
+          </div>
+        </div>
+
+        {/* COLONNE DROITE : Tâches */}
+        <div className="flex flex-col gap-6">
+          <Card className="flex h-full flex-col border-slate-200 shadow-sm dark:border-slate-800">
+            <CardHeader className="pb-3 bg-gradient-to-r from-transparent to-orange-50/30 dark:to-orange-950/10">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-lg font-semibold text-slate-900 dark:text-slate-100">Priorités Opérationnelles</CardTitle>
+                  <CardDescription>Tâches à faire aujourd'hui</CardDescription>
                 </div>
-              ) : null}
-              {!linkedinError && cadence && cadence.linkedInDaysAgo !== null ? (
-                <p className="text-xs text-slate-500">
-                  Dernier post il y a {cadence.linkedInDaysAgo} jours — objectif : 1 tous les 3 jours
-                </p>
-              ) : null}
-              {!linkedinError && linkedinPosts.length === 0 ? (
-                <p className="text-sm text-slate-500">Aucun post LinkedIn disponible</p>
-              ) : null}
-              {!linkedinError &&
-                visibleLinkedInPosts.map((post) => (
-                  <div key={post.id} className="rounded-md border border-slate-200 bg-white p-3">
-                    <p className="text-sm text-slate-900">{post.text || "Post sans texte"}</p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      👍 {post.likes} • 💬 {post.comments} • 🔁 {post.shares}
-                    </p>
-                  </div>
-                ))}
-              {!linkedinError && hiddenLinkedInPosts.length > 0 ? (
-                <details className="rounded-md border border-slate-200 bg-slate-50 p-3" suppressHydrationWarning>
-                  <summary className="cursor-pointer text-sm font-medium text-slate-700">
-                    Voir tous les posts ({linkedinPosts.length})
-                  </summary>
-                  <div className="mt-3 space-y-2">
-                    {hiddenLinkedInPosts.map((post) => (
-                      <div key={`${post.id}-all`} className="rounded-md border border-slate-200 bg-white p-3">
-                        <p className="text-sm text-slate-900">{post.text || "Post sans texte"}</p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          👍 {post.likes} • 💬 {post.comments} • 🔁 {post.shares}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </details>
-              ) : null}
+              </div>
+            </CardHeader>
+            <CardContent className="flex-1">
+              <TodayTasksList initialTasks={todayTasks} />
             </CardContent>
           </Card>
         </div>
+      </div>
 
+      {/* LIGNE 3 : Analyse & Système (2 colonnes) */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div className="flex flex-col gap-6">
-          <Card className="border-slate-200 shadow-sm">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-lg font-semibold text-slate-900">Pipeline</CardTitle>
-              <CardDescription>Métriques commerciales du jour</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {pipelineError ? <p className="text-sm text-slate-500">{pipelineError}</p> : null}
-              {!pipelineError && totalPipelineItems === 0 && pipeline.wonThisMonthRevenue === 0 ? (
-                <div className="flex items-start gap-2 rounded-md border border-blue-100 bg-blue-50 p-3 text-sm text-blue-700">
-                  <MessageSquare className="h-5 w-5 shrink-0" />
-                  <p>Aucun deal — commence par le Chat IA</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm text-slate-500">Leads</p>
-                    <p className="text-2xl font-bold text-slate-900">{pipeline.leads}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-slate-500">Deals en cours</p>
-                    <p className="text-2xl font-bold text-slate-900">{pipeline.inProgress}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-slate-500">Propositions</p>
-                    <p className="text-2xl font-bold text-slate-900">{pipeline.proposals}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-slate-500">CA gagné ce mois</p>
-                    <p className="text-2xl font-bold text-emerald-600">
-                      {pipeline.wonThisMonthRevenue.toLocaleString("fr-FR")} €
-                    </p>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card className="border-slate-200 shadow-sm">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base font-semibold text-slate-900">
-                <Database className="h-4 w-4 text-indigo-500" />
-                Mémoire BML
-              </CardTitle>
-              <CardDescription className="text-xs">Contexte business disponible</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex flex-wrap gap-4 text-sm">
-                <Badge variant="secondary" className="bg-slate-100 text-slate-700">
-                  Faits: {memory.facts}
-                </Badge>
-                <Badge variant="secondary" className="bg-slate-100 text-slate-700">
-                  Chunks: {memory.chunks}
-                </Badge>
-                <Badge variant="secondary" className="bg-slate-100 text-slate-700">
-                  Entités: {memory.entities}
-                </Badge>
-              </div>
-              <MemorySearchForm />
-              <SyncButton />
-            </CardContent>
-          </Card>
+          <YouTubeChart data={chartData} />
+          <LatestInsightsCard insights={insights} />
+          <BmlMemorySearch />
+        </div>
+        
+        <div className="flex flex-col gap-6">
+          <ContentCadenceCard cadence={cadence} />
+          <BmlDigestionStateCard state={digestionState} />
+          <SyncStatusList syncStatus={stats?.syncStatus || {}} />
         </div>
       </div>
     </div>

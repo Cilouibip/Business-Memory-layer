@@ -1,0 +1,143 @@
+{
+  "source": "claude_memory_export",
+  "export_date": "2026-03-11",
+  "description": "Export de la mémoire Claude (userMemories) sur Mehdi Benchaffi. À ingérer dans le BML comme raw_document de source claude_memory.",
+  "sections": {
+    "identite": {
+      "nom": "Mehdi Benchaffi",
+      "age": 37,
+      "nationalite": "Française",
+      "base": "France / Maroc",
+      "situation_familiale": "Père d'une jeune fille (apparaît dans son contenu comme élément narratif)",
+      "personnalite": "Introverti, préfère construire des systèmes plutôt que prospecter. S'identifie aux 'experts de l'ombre'. Communication directe, anti-bullshit, critique.",
+      "passion": "Producteur de musique électronique (Ableton), influence sa pensée sur la structure narrative"
+    },
+    "parcours_professionnel": {
+      "experience_totale": "15+ ans",
+      "postes_cles": [
+        "L'Oréal (opérations)",
+        "Pizza Hut Europe (opérations restauration)",
+        "Getir (COO, scalé de 0 à 2000 employés en 9 mois)",
+        "Mindeo Private Equity (Yomi Denzel) — COO, P&L 30M€+, quitté par désaccord sur certaines pratiques",
+        "Collaboration avec créateurs : Yomi Denzel, Antoine Blanco, Théo Ritzy (30M€+ générés)"
+      ],
+      "competences_core": [
+        "Revenue Operations (RevOps)",
+        "Scale-up opérationnel",
+        "Architecture CRM (HubSpot, Salesforce)",
+        "Automatisation IA business",
+        "Création de contenu (YouTube, LinkedIn)",
+        "Gestion P&L et métriques business"
+      ]
+    },
+    "business_actuel": {
+      "statut": "Freelance RevOps + construction offre productisée",
+      "offre_principale": {
+        "nom": "Machine à Revenus",
+        "description": "Système commercial structuré installé pour solopreneurs à petites équipes (jusqu'à ~50 personnes)",
+        "prix_core": "3000-4000€",
+        "structure": "6 briques outcome-based couvrant le cycle commercial complet incluant rétention post-sale",
+        "framework": "Commando/Builder — Commando = activation rapide (70% temps initial), Builder = fondations scalables (30%)",
+        "duree": "60 jours done-for-you",
+        "garantie": "2 premières semaines = phase clarification, arrêt possible si pas de fit",
+        "upsells": "Modules accélérateurs optionnels après 60 jours"
+      },
+      "exploration_produit": {
+        "nom": "Mini-CRM + IA",
+        "description": "CRM simplifié anti-HubSpot/Salesforce pour solopreneurs et petites équipes (2-10 personnes)",
+        "tech": "Forké depuis Atomic CRM, React/TypeScript/Supabase, construit avec Windsurf AI",
+        "statut": "Question stratégique non résolue : outil interne de delivery ou produit autonome",
+        "validation": "Call avec associé Greg en mars 2026 pour valider le positionnement"
+      },
+      "retainer_actif": "Mission freelance RevOps en cours",
+      "clients_en_cours": [
+        {
+          "nom": "Mezaelle",
+          "statut": "Deal won, 6000€",
+          "note": "Entreprise privée, pas de Notion externe. Nécessite workspace séparé dans le cockpit BML"
+        },
+        {
+          "nom": "Quentin Beaumann",
+          "statut": "En qualification",
+          "note": "Lead dans le pipeline CRM"
+        }
+      ]
+    },
+    "content_strategy": {
+      "youtube": {
+        "chaine": "Mehdi Benchaffi (anciennement RaveOps / Revenue Opérationnel)",
+        "strategie": "Bible YouTube 2026 en développement sur Notion",
+        "trois_piliers": ["Attention/Narration", "Système/Machine", "IA/Levier"],
+        "videos_notables": [
+          "Le meilleur produit ne gagne jamais (storytelling via Drive to Survive/F1)",
+          "La fin de l'expertise en 2026 (cas Swissair/McKinsey)",
+          "Pourquoi les cancres vont dominer le monde",
+          "L'Antidote contre l'IA (risque existentiel)"
+        ],
+        "ancien_chaine": "Les Toqués Business (~1400 abonnés, food/retail brand storytelling)"
+      },
+      "linkedin": {
+        "style": "Direct, contrarian, storytelling personnel, anti-guru",
+        "engagement_moyen": "15-50 likes, 0-18 commentaires selon le post",
+        "meilleurs_posts": "Contenu personnel (51 likes, 18 commentaires), fiscalité (34 likes), storytelling Getir",
+        "lead_magnets": [
+          "Guide RevOps gratuit (commentaire requis)",
+          "Diagnostic Brutal / Matrice de l'Expertise 2026 (quiz 6 archétypes, Next.js/Supabase/Claude API)",
+          "Outil génération posts LinkedIn depuis vidéos YouTube"
+        ]
+      },
+      "acquisition": "LinkedIn use-case posts + YouTube + prospection légère. Meilleurs clients viennent du contenu organique, pas de prospection."
+    },
+    "projets_tech": {
+      "bml": {
+        "nom": "Business Memory Layer",
+        "description": "Système de mémoire business qui ingère données (YouTube, LinkedIn, Notion) et les transforme en objets métier structurés",
+        "stack": "Next.js App Router + Supabase + pgvector + Claude API + Zod",
+        "etat": "MVP fonctionnel avec cockpit web, MCP Server connecté à Claude Desktop",
+        "vision": "Phase 1 outil perso → Phase 2 service quelques clients → Phase 3 SaaS/API"
+      },
+      "scaale_it": {
+        "nom": "Scaale.it",
+        "description": "SaaS d'attribution organique tracking visiteurs de YouTube content vers revenus",
+        "stack": "NestJS, Supabase, Next.js"
+      },
+      "storyscore": {
+        "description": "Micro-SaaS concept de scoring de scripts vidéo"
+      },
+      "jurislI": {
+        "description": "Agent IA pour monitoring actualité juridique et génération contenu LinkedIn pour avocats français"
+      },
+      "lead_machine": {
+        "description": "Pipeline B2B lead scoring (Next.js, Python, Supabase, Claude API, AnyMailFinder, Lemlist)"
+      },
+      "diagnostic_brutal": {
+        "description": "Quiz lead magnet 6 archétypes entrepreneur (Next.js, Supabase, Claude API, Systeme.io)"
+      }
+    },
+    "philosophie_business": {
+      "positionnement": "Opérateur de systèmes (ex-COO), pas consultant IA ni growth hacker ni freelance marketing",
+      "anti_patterns": [
+        "Networking transactionnel",
+        "Cold calls et routines extrêmes",
+        "Promesses marketing superficielles",
+        "Vente de tech pure sans comprendre le business",
+        "Automatisation prématurée (turbo sur voiture sans freins)"
+      ],
+      "principes": [
+        "Le contenu est le nouveau capital",
+        "Simplicity + exécution > plan complexe",
+        "Valider manuellement avant de coder",
+        "Commencer par l'essentiel, le reste suivra",
+        "95% des problèmes de scale viennent de l'opérationnel, pas du produit"
+      ],
+      "vision_marche": "Anticipe saturation marché agents IA suite au challenge Mindeo. Seuls ceux avec vrai edge (expertise business, distribution organique, qualité) vont émerger.",
+      "objectif_vie": "Business solo structuré avec cash, temps libre pour voir sa fille grandir, liberté de travailler sur des systèmes. Pas scaler une agence à 50 personnes."
+    },
+    "collaborations": {
+      "greg": "Associé La Tribu. Call stratégique mars 2026 sur repositionnement mini-CRM + IA",
+      "la_tribu": "Co-fondé avec Greg. Aide créateurs YouTube (2K-50K abonnés) à monétiser via high-ticket offers",
+      "markentive": "HubSpot Elite Partner. Mehdi a passé plusieurs rounds d'entretien (missions pratiques), recherche de poste freelance consultant RevOps/IA",
+      "thomas_pinet": "Client TP'Impact Conseil. Redesign landing page et stratégies lead magnet pour consulting PME"
+    }
+  }
+}

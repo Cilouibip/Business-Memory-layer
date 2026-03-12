@@ -1,5 +1,6 @@
 import { syncLinkedIn } from '../connectors/linkedin';
 import { syncNotion } from '../connectors/notion';
+import { syncGDrive } from '../connectors/gdrive';
 import { syncYouTube } from '../connectors/youtube';
 import { supabase } from '../lib/supabase';
 import { chunkAndEmbed } from './embedding';
@@ -17,7 +18,7 @@ type ConnectorResult = {
 
 type RawDocumentRow = {
   id: string;
-  source_type: 'youtube' | 'linkedin' | 'notion';
+  source_type: 'youtube' | 'linkedin' | 'notion' | 'gdrive';
   raw_payload: Record<string, unknown>;
   business_category?: 'contenu' | 'offre' | 'client' | 'strategie' | 'metrique' | 'process' | 'autre' | null;
   summary?: string | null;
@@ -27,10 +28,10 @@ type ContentItemRow = { id: string; title?: string | null; summary?: string | nu
 type OfferRow = { id: string; name?: string | null; description?: string | null };
 type EntityRow = { id: string; name?: string | null; attributes?: Record<string, unknown> | null };
 
-type PipelineSources = Array<'youtube' | 'linkedin' | 'notion'>;
+type PipelineSources = Array<'youtube' | 'linkedin' | 'notion' | 'gdrive'>;
 
 export type PipelineResult = {
-  sync: { youtube?: ConnectorResult; linkedin?: ConnectorResult; notion?: ConnectorResult };
+  sync: { youtube?: ConnectorResult; linkedin?: ConnectorResult; notion?: ConnectorResult; gdrive?: ConnectorResult };
   triage: { processed: number; triaged: number; skipped: number; failed: number };
   extraction: { processed: number; canonicalized: number; failed: number };
   embedding: { processed: number; embedded: number; failed: number };
@@ -81,6 +82,11 @@ async function runSync(sources: PipelineSources): Promise<PipelineResult['sync']
       continue;
     }
 
+    if (source === 'gdrive') {
+      syncResult.gdrive = await syncGDrive();
+      continue;
+    }
+
     syncResult.notion = await syncNotion();
   }
 
@@ -88,7 +94,7 @@ async function runSync(sources: PipelineSources): Promise<PipelineResult['sync']
 }
 
 export async function runPipeline(options?: {
-  sources?: Array<'youtube' | 'linkedin' | 'notion'>;
+  sources?: Array<'youtube' | 'linkedin' | 'notion' | 'gdrive'>;
   skipSync?: boolean;
   limit?: number;
 }): Promise<PipelineResult> {

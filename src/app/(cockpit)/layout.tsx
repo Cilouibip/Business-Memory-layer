@@ -4,6 +4,7 @@ import {
   MessageSquare, 
   FileText, 
   BarChart3, 
+  ListTodo,
   Settings, 
   Menu 
 } from "lucide-react";
@@ -53,6 +54,14 @@ export default function CockpitLayout({
           >
             <BarChart3 className="w-5 h-5" />
             <span>Pipeline</span>
+          </Link>
+
+          <Link 
+            href="/tasks" 
+            className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-slate-800 transition-colors"
+          >
+            <ListTodo className="w-5 h-5" />
+            <span>Tâches</span>
           </Link>
           
           <div className="my-4">

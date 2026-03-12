@@ -52,7 +52,16 @@ export async function updateDraftStatus(draftId: string, status: LinkedInDraftSt
     .eq("id", draftId);
 
   if (error) {
-    throw new Error(`Impossible de mettre à jour le statut du draft: ${error.message}`);
+    throw new Error(`Impossible de mettre à jour le statut du draft: `);
+  }
+
+  if (status === "approved") {
+    try {
+      const { completeTaskByTitle } = await import("./taskQueries");
+      await completeTaskByTitle("Valider draft LinkedIn");
+    } catch (e) {
+      console.error("[hook] Failed to complete draft task:", e);
+    }
   }
 }
 

@@ -173,24 +173,104 @@ export async function getAllVideos(): Promise<YouTubeVideoStats[]> {
   return allVideos;
 }
 
-export async function getYouTubeViewsLast30Days(): Promise<number> {
+export async function getYouTubeDailyStats(days: number = 30): Promise<{ date: string; views: number; watchTimeMinutes: number; subscribersGained: number }[]> {
+  const cacheKey = `youtube_daily_stats_${days}`;
+  const cached = getCached<any>(cacheKey);
+  if (cached) return cached;
+
   const analyticsClient = buildYouTubeAnalyticsClient();
-  const { startDate, endDate } = getDateRangeLast30Days();
+  
+  const end = new Date();
+  const start = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const toIsoDate = (date: Date) => date.toISOString().slice(0, 10);
+  
+  const startDate = toIsoDate(start);
+  const endDate = toIsoDate(end);
 
-  const report = await analyticsClient.reports.query({
-    ids: 'channel==MINE',
-    startDate,
-    endDate,
-    metrics: 'views',
-  });
+  try {
+    const report = await analyticsClient.reports.query({
+      ids: 'channel==MINE',
+      startDate,
+      endDate,
+      metrics: 'views,estimatedMinutesWatched,subscribersGained',
+      dimensions: 'day',
+      sort: 'day',
+    });
 
-  const firstRow = report.data.rows?.[0];
-  if (!firstRow || firstRow.length === 0) {
-    return 0;
+    const rows = report.data.rows ?? [];
+    const stats = rows.map((row) => ({
+      date: String(row[0]),
+      views: Number(row[1]) || 0,
+      watchTimeMinutes: Number(row[2]) || 0,
+      subscribersGained: Number(row[3]) || 0,
+    }));
+
+    setCache(cacheKey, stats);
+    return stats;
+  } catch (error) {
+    console.error('Erreur getYouTubeDailyStats:', error);
+    return [];
   }
+}
 
-  const views = Number(firstRow[0]);
-  return Number.isNaN(views) ? 0 : views;
+export async function getYouTubeTopVideos(days: number = 30, limit: number = 5) {
+  const cacheKey = `youtube_top_videos_${days}_${limit}`;
+  const cached = getCached<any>(cacheKey);
+  if (cached) return cached;
+
+  const analyticsClient = buildYouTubeAnalyticsClient();
+  const youtubeClient = buildYouTubeClient();
+  
+  const end = new Date();
+  const start = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const toIsoDate = (date: Date) => date.toISOString().slice(0, 10);
+
+  try {
+    const report = await analyticsClient.reports.query({
+      ids: 'channel==MINE',
+      startDate: toIsoDate(start),
+      endDate: toIsoDate(end),
+      metrics: 'views,estimatedMinutesWatched,likes',
+      dimensions: 'video',
+      sort: '-views',
+      maxResults: limit,
+    });
+
+    const rows = report.data.rows ?? [];
+    if (rows.length === 0) return [];
+
+    const videoIds = rows.map((row) => String(row[0]));
+    
+    // Fetch titles
+    const videosResponse = await youtubeClient.videos.list({
+      part: ['snippet'],
+      id: videoIds,
+    });
+
+    const titlesMap: Record<string, string> = {};
+    for (const item of videosResponse.data.items ?? []) {
+      if (item.id && item.snippet?.title) {
+        titlesMap[item.id] = item.snippet.title;
+      }
+    }
+
+    const topVideos = rows.map((row) => {
+      const id = String(row[0]);
+      return {
+        id,
+        title: titlesMap[id] || 'Vidéo inconnue',
+        views: Number(row[1]) || 0,
+        watchTimeMinutes: Number(row[2]) || 0,
+        likes: Number(row[3]) || 0,
+      };
+    });
+
+    setCache(cacheKey, topVideos);
+    return topVideos;
+  } catch (error) {
+    console.error('Erreur getYouTubeTopVideos:', error);
+    return [];
+  }
 }
 
 async function getYouTubeMetricForRange(
@@ -232,17 +312,20 @@ export async function getYouTubeBusinessSnapshot() {
   const cached = getCached<any>('youtube_snapshot');
   if (cached) return cached;
 
-  const [channel, latestVideos, viewsLast30Days, weeklyViews, subscribersGainedLast7Days] = await Promise.all([
+  const [channel, latestVideos, dailyStats, weeklyViews, subscribersGainedLast7Days] = await Promise.all([
     getYouTubeChannelStats(),
     getYouTubeLatestVideos(3),
-    getYouTubeViewsLast30Days(),
+    getYouTubeDailyStats(30),
     getYouTubeWeeklyViews(),
     getYouTubeSubscribersGainedLast7Days(),
   ]);
+  
+  const viewsLast30Days = dailyStats.reduce((sum: number, stat: any) => sum + stat.views, 0);
 
   const result = {
     channel,
     latestVideos,
+    dailyStats,
     viewsLast30Days,
     weeklyViews,
     subscribersGainedLast7Days,

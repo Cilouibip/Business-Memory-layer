@@ -1,43 +1,27 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ChatSidebar } from "@/components/cockpit/chat/ChatSidebar";
+import { ChatMessage } from "@/components/cockpit/chat/ChatMessage";
+import { ChatInput } from "@/components/cockpit/chat/ChatInput";
+import { Sparkles, BrainCircuit, Users, Zap } from "lucide-react";
+
 const WORKSPACE_ID = "personal";
 
-type UiMessage = { id: string; role: "user" | "assistant"; content: string; toolBadges?: string[] };
+type ToolCallBadge = { toolName: string; output?: string; status: "pending" | "success" | "error" };
+type UiMessage = { id: string; role: "user" | "assistant"; content: string; toolCalls?: ToolCallBadge[] };
 type ConversationItem = { id: string; title: string | null; updated_at: string };
 
-function inlineMarkdown(text: string) {
-  const parts = text.split(/(\*\*.*?\*\*)/g).filter(Boolean);
-  return parts.map((part, index) =>
-    part.startsWith("**") && part.endsWith("**") ? (
-      <strong key={`${part}-${index}`}>{part.slice(2, -2)}</strong>
-    ) : (
-      <span key={`${part}-${index}`}>{part}</span>
-    ),
-  );
-}
-
-function renderMarkdown(text: string) {
-  return text.split("\n").map((line, idx) =>
-    line.trim().startsWith("- ") ? (
-      <div key={`${line}-${idx}`} className="flex gap-2">
-        <span>•</span>
-        <span>{inlineMarkdown(line.replace(/^- /, ""))}</span>
-      </div>
-    ) : (
-      <p key={`${line}-${idx}`}>{inlineMarkdown(line)}</p>
-    ),
-  );
-}
+const QUICK_ACTIONS = [
+  { icon: Zap, label: "Point sur ma semaine", prompt: "Fais-moi un résumé de tout ce qui s'est passé cette semaine (deals, contenu, etc)." },
+  { icon: BrainCircuit, label: "Préparer un post LinkedIn", prompt: "Je veux écrire un post LinkedIn. Pose-moi 3 questions pour définir l'angle et le sujet." },
+  { icon: Users, label: "Ajouter un lead", prompt: "Je viens d'avoir un appel avec un nouveau prospect. Pose-moi les questions nécessaires pour l'ajouter au CRM." },
+];
 
 export default function ChatPage() {
   const endRef = useRef<HTMLDivElement | null>(null);
-  const toolMapRef = useRef<Record<string, string>>({});
+  const toolMapRef = useRef<Record<string, { name: string; output?: string }>>({});
+  
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
@@ -46,9 +30,13 @@ export default function ChatPage() {
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const scrollToBottom = () => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "auto" });
-  }, [messages]);
+    scrollToBottom();
+  }, [messages, isLoading]);
 
   async function loadConversations() {
     setIsLoadingConversations(true);
@@ -71,18 +59,25 @@ export default function ChatPage() {
       const response = await fetch(`/api/chat?conversation_id=${id}`);
       if (!response.ok) throw new Error(`Erreur chargement messages: ${response.status}`);
       const data = await response.json();
+      
       const loaded: UiMessage[] = (data.messages ?? []).map((message: any) => {
         const storedToolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
-        const toolLabels = storedToolCalls
-          .map((call: any) => (typeof call?.toolName === "string" ? `Outil appelé : ${call.toolName}` : null))
-          .filter(Boolean) as string[];
+        const mappedToolCalls = storedToolCalls
+          .filter((call: any) => typeof call?.toolName === "string")
+          .map((call: any) => ({
+            toolName: call.toolName,
+            output: call.result ? "Exécuté avec succès" : undefined,
+            status: "success" as const
+          }));
+          
         return {
           id: String(message.id),
           role: message.role === "assistant" ? "assistant" : "user",
           content: String(message.content ?? ""),
-          toolBadges: toolLabels,
+          toolCalls: mappedToolCalls,
         };
       });
+      
       setConversationId(id);
       setMessages(loaded);
     } catch (e) {
@@ -96,25 +91,25 @@ export default function ChatPage() {
     void loadConversations();
   }, []);
 
-  function badgeFromTool(toolName: string, output: any): string {
-    if (toolName === "create_contact" && output?.name) return `Contact créé : ${output.name}`;
-    if (toolName === "create_deal" && output?.contact?.name) return `Deal créé : ${output.contact.name}`;
-    if (toolName === "update_deal" && output?.deal?.status) return `Deal mis à jour : ${output.deal.status}`;
-    if (toolName === "log_activity") return "Activité CRM enregistrée";
-    if (toolName === "get_pipeline_summary") return "Résumé pipeline récupéré";
-    if (toolName === "get_overdue_actions") return "Actions en retard récupérées";
-    return `Outil CRM exécuté : ${toolName}`;
+  async function handleQuickAction(prompt: string) {
+    setInput(prompt);
+    // On laisse le state se mettre à jour puis on lance le submit
+    setTimeout(() => {
+      const fakeEvent = { preventDefault: () => {} } as React.FormEvent;
+      void onSubmit(fakeEvent, prompt);
+    }, 50);
   }
 
-  async function onSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const userText = input.trim();
+  async function onSubmit(event?: React.FormEvent, forceInput?: string) {
+    event?.preventDefault();
+    const userText = forceInput ?? input.trim();
     if (!userText || isLoading) return;
+    
     setError(null);
 
-    const userMessage = { id: `u-${Date.now()}`, role: "user" as const, content: userText };
+    const userMessage: UiMessage = { id: `u-${Date.now()}`, role: "user", content: userText };
     const assistantId = `a-${Date.now()}`;
-    const assistantMessage = { id: assistantId, role: "assistant" as const, content: "", toolBadges: [] as string[] };
+    const assistantMessage: UiMessage = { id: assistantId, role: "assistant", content: "", toolCalls: [] };
 
     const nextMessages = [...messages, userMessage];
     setMessages([...nextMessages, assistantMessage]);
@@ -129,18 +124,14 @@ export default function ChatPage() {
         body: JSON.stringify({
           conversation_id: conversationId ?? undefined,
           workspace_id: WORKSPACE_ID,
-          messages: nextMessages.map((message) => ({
-            role: message.role,
-            content: message.content,
-          })),
+          messages: nextMessages.map((m) => ({ role: m.role, content: m.content })),
         }),
       });
 
-      if (!response.ok || !response.body) {
-        throw new Error(`Erreur backend chat: ${response.status}`);
-      }
+      if (!response.ok || !response.body) throw new Error(`Erreur backend: ${response.status}`);
+      
       const newConversationId = response.headers.get("x-conversation-id");
-      if (newConversationId) {
+      if (newConversationId && !conversationId) {
         setConversationId(newConversationId);
       }
 
@@ -148,27 +139,10 @@ export default function ChatPage() {
       const decoder = new TextDecoder();
       let buffer = "";
 
-      const addAssistantText = (delta: string) => {
-        setMessages((prev) =>
-          prev.map((message) =>
-            message.id === assistantId ? { ...message, content: `${message.content}${delta}` } : message,
-          ),
-        );
-      };
-
-      const addToolBadge = (badge: string) => {
-        setMessages((prev) =>
-          prev.map((message) =>
-            message.id === assistantId
-              ? { ...message, toolBadges: Array.from(new Set([...(message.toolBadges ?? []), badge])) }
-              : message,
-          ),
-        );
-      };
-
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
+        
         buffer += decoder.decode(value, { stream: true });
         const events = buffer.split("\n\n");
         buffer = events.pop() ?? "";
@@ -178,27 +152,53 @@ export default function ChatPage() {
             .split("\n")
             .filter((line) => line.startsWith("data:"))
             .map((line) => line.replace(/^data:\s?/, ""));
+            
           if (dataLines.length === 0) continue;
           const payload = dataLines.join("\n").trim();
           if (!payload || payload === "[DONE]") continue;
 
           let chunk: any;
-          try {
-            chunk = JSON.parse(payload);
-          } catch {
-            continue;
-          }
+          try { chunk = JSON.parse(payload); } catch { continue; }
 
-          if (chunk.type === "text-delta" && typeof chunk.delta === "string") {
-            addAssistantText(chunk.delta);
-          }
-          if ((chunk.type === "tool-input-start" || chunk.type === "tool-input-available") && chunk.toolCallId && chunk.toolName) {
-            toolMapRef.current[String(chunk.toolCallId)] = String(chunk.toolName);
-          }
-          if (chunk.type === "tool-output-available" && chunk.toolCallId) {
-            const toolName = toolMapRef.current[String(chunk.toolCallId)] ?? "unknown_tool";
-            addToolBadge(badgeFromTool(toolName, chunk.output));
-          }
+          setMessages((prev) => prev.map((msg) => {
+            if (msg.id !== assistantId) return msg;
+
+            let newContent = msg.content;
+            let newToolCalls = [...(msg.toolCalls || [])];
+
+            // Texte classique
+            if (chunk.type === "text-delta" && typeof chunk.delta === "string") {
+              newContent += chunk.delta;
+            }
+
+            // L'outil démarre ("Thinking")
+            if (chunk.type === "tool-input-start" || chunk.type === "tool-input-available") {
+              if (chunk.toolCallId && chunk.toolName) {
+                toolMapRef.current[chunk.toolCallId] = { name: chunk.toolName };
+                // Ajouter à l'UI si pas déjà présent
+                if (!newToolCalls.find(t => t.toolName === chunk.toolName && t.status === "pending")) {
+                  newToolCalls.push({ toolName: chunk.toolName, status: "pending" });
+                }
+              }
+            }
+
+            // L'outil a terminé
+            if (chunk.type === "tool-output-available" && chunk.toolCallId) {
+              const tool = toolMapRef.current[chunk.toolCallId];
+              if (tool) {
+                tool.output = chunk.output ? "Données récupérées" : "Action exécutée";
+                // Mettre à jour l'UI (passer de pending à success)
+                const existingIdx = newToolCalls.findIndex(t => t.toolName === tool.name && t.status === "pending");
+                if (existingIdx >= 0) {
+                  newToolCalls[existingIdx] = { toolName: tool.name, status: "success", output: tool.output };
+                } else {
+                  newToolCalls.push({ toolName: tool.name, status: "success", output: tool.output });
+                }
+              }
+            }
+
+            return { ...msg, content: newContent, toolCalls: newToolCalls };
+          }));
         }
       }
     } catch (e) {
@@ -210,91 +210,83 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="mx-auto flex h-full max-w-4xl flex-col gap-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight text-slate-900">Chat IA</h1>
-        <p className="mt-1 text-slate-500">Échange avec ton business brain</p>
+    <div className="flex h-[calc(100vh-8rem)] w-full overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+      {/* SIDEBAR */}
+      <div className="hidden w-64 flex-shrink-0 md:block">
+        <ChatSidebar
+          conversations={conversations}
+          activeId={conversationId}
+          isLoading={isLoadingConversations}
+          onSelect={openConversation}
+          onNew={() => { setConversationId(null); setMessages([]); setError(null); }}
+        />
       </div>
 
-      <Card className="border-slate-200 shadow-sm">
-        <CardHeader className="flex flex-row items-center justify-between pb-2">
-          <CardTitle className="text-base text-slate-900">Conversations récentes</CardTitle>
-          <Button type="button" size="sm" variant="outline" onClick={() => { setConversationId(null); setMessages([]); setError(null); }}>Nouvelle conversation</Button>
-        </CardHeader>
-        <CardContent className="pt-0">
-          <div className="flex flex-wrap gap-2">
-            {isLoadingConversations ? <p className="text-sm text-slate-500">Chargement...</p> : null}
-            {!isLoadingConversations && conversations.length === 0 ? <p className="text-sm text-slate-500">Aucune conversation.</p> : null}
-            {conversations.map((conversation) => (
-              <button
-                key={conversation.id}
-                type="button"
-                onClick={() => void openConversation(conversation.id)}
-                className={`rounded-md border px-3 py-1 text-left text-xs ${conversationId === conversation.id ? "border-slate-900 bg-slate-100 text-slate-900" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
-              >
-                <div className="font-medium">{conversation.title || "Nouvelle conversation"}</div>
-                <div>{new Date(conversation.updated_at).toLocaleString("fr-FR")}</div>
-              </button>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+      {/* MAIN CHAT AREA */}
+      <div className="flex flex-1 flex-col relative">
+        {/* Messages List */}
+        <div className="flex-1 overflow-y-auto scroll-smooth">
+          {messages.length === 0 ? (
+            <div className="flex h-full flex-col items-center justify-center p-8 text-center">
+              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-100 text-indigo-600 dark:bg-indigo-900/50 dark:text-indigo-400">
+                <Sparkles className="h-6 w-6" />
+              </div>
+              <h2 className="mb-2 text-xl font-semibold text-slate-900 dark:text-slate-100">
+                Business Memory Layer
+              </h2>
+              <p className="mb-8 max-w-sm text-sm text-slate-500 dark:text-slate-400">
+                Ton copilote a accès à tout ton contexte d'entreprise. Pose-lui une question ou demande-lui d'exécuter une tâche.
+              </p>
 
-      <Card className="flex min-h-[620px] flex-1 flex-col border-slate-200 shadow-sm">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base text-slate-900">
-            Conversation {conversationId ? `• ${conversationId.slice(0, 8)}` : "• nouvelle"}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-1 flex-col gap-4 p-4">
-          <ScrollArea className="h-[470px] rounded-md border border-slate-200 bg-white p-3">
-            <div className="flex flex-col gap-3">
-              {messages.length === 0 ? (
-                <p className="text-sm text-slate-500">
-                  Commence la conversation. Exemple: “j&apos;ai eu un call avec Sophie, ajoute-la au CRM”.
-                </p>
-              ) : null}
-
-              {messages.map((message) => {
-                const isUser = message.role === "user";
-                const crmBadges = !isUser ? (message.toolBadges ?? []) : [];
-                const text = String(message.content ?? "");
-
-                return (
-                  <div key={message.id} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-                    <div className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${isUser ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-900"}`}>
-                      <div className="space-y-1 whitespace-pre-wrap">{renderMarkdown(text)}</div>
-                      {crmBadges.length > 0 ? (
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {crmBadges.map((label, index) => (
-                            <Badge key={`${label}-${index}`} className="border border-emerald-200 bg-emerald-100 text-emerald-700">
-                              {label}
-                            </Badge>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                );
-              })}
-              <div ref={endRef} />
+              {/* QUICK ACTIONS */}
+              <div className="grid w-full max-w-2xl gap-3 md:grid-cols-3">
+                {QUICK_ACTIONS.map((action, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => handleQuickAction(action.prompt)}
+                    className="flex flex-col items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 text-left transition-all hover:border-indigo-200 hover:bg-indigo-50 hover:shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:hover:border-indigo-800 dark:hover:bg-indigo-950/50"
+                  >
+                    <action.icon className="h-5 w-5 text-indigo-500" />
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{action.label}</span>
+                  </button>
+                ))}
+              </div>
             </div>
-          </ScrollArea>
-          {error ? <p className="text-sm text-red-600">{error}</p> : null}
+          ) : (
+            <div className="pb-8">
+              {messages.map((message, idx) => (
+                <ChatMessage 
+                  key={message.id} 
+                  role={message.role} 
+                  content={message.content} 
+                  toolCalls={message.toolCalls}
+                  isLatest={idx === messages.length - 1} 
+                />
+              ))}
+              {error && (
+                <div className="mx-auto mt-4 w-full max-w-3xl px-4">
+                  <div className="rounded-lg bg-red-50 p-3 text-sm text-red-600 border border-red-200 dark:bg-red-950/30 dark:text-red-400 dark:border-red-900/50">
+                    Erreur: {error}
+                  </div>
+                </div>
+              )}
+              <div ref={endRef} className="h-4" />
+            </div>
+          )}
+        </div>
 
-          <form onSubmit={onSubmit} className="flex items-center gap-2">
-            <Input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Parle à ton business... (ex: j'ai eu un call avec Sophie)"
-              className="border-slate-200 bg-white"
+        {/* Input Area */}
+        <div className="bg-gradient-to-t from-white via-white to-white/0 px-4 pb-4 pt-6 dark:from-slate-950 dark:via-slate-950 dark:to-slate-950/0 md:px-8">
+          <div className="mx-auto w-full max-w-4xl">
+            <ChatInput 
+              input={input} 
+              setInput={setInput} 
+              onSubmit={onSubmit} 
+              isLoading={isLoading} 
             />
-            <Button type="submit" disabled={isLoading || input.trim().length === 0} className="bg-slate-900 text-white hover:bg-slate-800">
-              Envoyer
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -1,12 +1,7 @@
 import { supabase } from './supabase';
-
-type Contact = {
-  id: string;
-  name: string;
-  company: string | null;
-  source: string | null;
-  notes: string | null;
-};
+import { resolveContactByName, type Contact } from './crmContactResolver';
+import { getOverdueActions, getPipelineSummary } from './crmPipelineQueries';
+import { createTask } from './taskQueries';
 
 type Deal = {
   id: string;
@@ -18,49 +13,6 @@ type Deal = {
   next_action: string | null;
   next_action_date: string | null;
 };
-
-type ContactMatch =
-  | { status: 'single'; contact: Contact }
-  | { status: 'multiple'; matches: Contact[] }
-  | { status: 'none'; created_contact: Contact };
-
-function normalize(value: string): string {
-  return value.trim().toLowerCase();
-}
-
-function isFuzzyMatch(query: string, candidate: string): boolean {
-  const q = normalize(query);
-  const c = normalize(candidate);
-  return c.includes(q) || q.includes(c);
-}
-
-async function getAllContacts(): Promise<Contact[]> {
-  const { data, error } = await (supabase as any)
-    .from('contacts')
-    .select('id,name,company,source,notes');
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return (data ?? []) as Contact[];
-}
-
-async function resolveContactByName(contactName: string): Promise<ContactMatch> {
-  const contacts = await getAllContacts();
-  const matches = contacts.filter((contact) => isFuzzyMatch(contactName, contact.name));
-
-  if (matches.length > 1) {
-    return { status: 'multiple', matches };
-  }
-
-  if (matches.length === 1) {
-    return { status: 'single', contact: matches[0] };
-  }
-
-  const created = await createContact({ name: contactName, source: 'chat' });
-  return { status: 'none', created_contact: created };
-}
 
 export async function createContact(input: {
   name: string;
@@ -94,7 +46,7 @@ export async function createDealByContactName(input: {
   amount?: number;
   status?: string;
 }) {
-  const contactResolution = await resolveContactByName(input.contact_name);
+  const contactResolution = await resolveContactByName(input.contact_name, (payload) => createContact(payload));
 
   if (contactResolution.status === 'multiple') {
     return {
@@ -140,7 +92,7 @@ export async function updateDealByContactName(input: {
   next_action_date?: string;
   amount?: number;
 }) {
-  const contactResolution = await resolveContactByName(input.contact_name);
+  const contactResolution = await resolveContactByName(input.contact_name, (payload) => createContact(payload));
 
   if (contactResolution.status === 'multiple') {
     return {
@@ -191,10 +143,43 @@ export async function updateDealByContactName(input: {
     throw new Error(error.message);
   }
 
+  const updatedDeal = data as Deal;
+  const dueInDays = (days: number) => new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  if (input.status === 'won') {
+    try {
+      await createTask({
+        title: `Configurer onboarding ${contact.name}`,
+        priority: 'high',
+        due_date: dueInDays(3),
+        source_type: 'hook',
+        related_deal_id: updatedDeal.id,
+        related_contact_id: contact.id,
+      });
+    } catch (e) {
+      console.error('[hook] Failed to create onboarding task:', e);
+    }
+  }
+
+  if (input.status === 'proposal' || input.status === 'proposal_sent') {
+    try {
+      await createTask({
+        title: `Envoyer proposition ${contact.name}`,
+        priority: 'high',
+        due_date: dueInDays(2),
+        source_type: 'hook',
+        related_deal_id: updatedDeal.id,
+        related_contact_id: contact.id,
+      });
+    } catch (e) {
+      console.error('[hook] Failed to create proposal task:', e);
+    }
+  }
+
   return {
     status: 'updated',
     contact,
-    deal: data as Deal,
+    deal: updatedDeal,
   };
 }
 
@@ -203,7 +188,7 @@ export async function logActivityByContactName(input: {
   type: string;
   description: string;
 }) {
-  const contactResolution = await resolveContactByName(input.contact_name);
+  const contactResolution = await resolveContactByName(input.contact_name, (payload) => createContact(payload));
 
   if (contactResolution.status === 'multiple') {
     return {
@@ -267,52 +252,4 @@ export async function logActivityByContactName(input: {
   };
 }
 
-export async function getPipelineSummary() {
-  const { data, error } = await (supabase as any)
-    .from('deals')
-    .select('status, amount');
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  const deals = (data ?? []) as Array<{ status: string | null; amount: number | null }>;
-
-  const summary = {
-    leads: 0,
-    qualified: 0,
-    proposals: 0,
-    won: 0,
-    revenue: 0,
-  };
-
-  for (const deal of deals) {
-    const status = (deal.status ?? '').toLowerCase();
-    if (status === 'lead') summary.leads += 1;
-    if (status === 'qualified') summary.qualified += 1;
-    if (status === 'proposal' || status === 'proposals') summary.proposals += 1;
-    if (status === 'won') {
-      summary.won += 1;
-      summary.revenue += Number(deal.amount ?? 0);
-    }
-  }
-
-  return summary;
-}
-
-export async function getOverdueActions() {
-  const today = new Date().toISOString().slice(0, 10);
-
-  const { data, error } = await (supabase as any)
-    .from('deals')
-    .select('id,contact_id,offer,amount,currency,status,next_action,next_action_date')
-    .not('next_action_date', 'is', null)
-    .lt('next_action_date', today)
-    .in('status', ['lead', 'qualified', 'proposal']);
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return data ?? [];
-}
+export { getOverdueActions, getPipelineSummary };

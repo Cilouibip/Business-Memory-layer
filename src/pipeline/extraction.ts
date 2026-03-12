@@ -30,7 +30,10 @@ export async function extractDocument(rawDoc: RawDocumentInput, triageResult: Tr
       const canonical = await upsertContentItem(rawDoc.id, extraction.content_item);
 
       for (const fact of extraction.business_facts) {
-        await upsertBusinessFactWithChangeDetection(canonical.sourceEntityType, canonical.sourceEntityId, fact);
+        await upsertBusinessFactWithChangeDetection(canonical.sourceEntityType, canonical.sourceEntityId, fact, {
+          sourceContentPublishedAt: extraction.content_item.publish_date ?? null,
+          rawDocumentId: rawDoc.id,
+        });
       }
 
       await insertRelationships(canonical.sourceEntityType, canonical.sourceEntityId, extraction.relationships);
@@ -49,7 +52,9 @@ export async function extractDocument(rawDoc: RawDocumentInput, triageResult: Tr
       const canonical = await upsertOffer(rawDoc.id, extraction.offer);
 
       for (const fact of extraction.business_facts) {
-        await upsertBusinessFactWithChangeDetection(canonical.sourceEntityType, canonical.sourceEntityId, fact);
+        await upsertBusinessFactWithChangeDetection(canonical.sourceEntityType, canonical.sourceEntityId, fact, {
+          rawDocumentId: rawDoc.id,
+        });
       }
 
       await insertRelationships(canonical.sourceEntityType, canonical.sourceEntityId, extraction.relationships);
@@ -68,7 +73,9 @@ export async function extractDocument(rawDoc: RawDocumentInput, triageResult: Tr
     const canonical = await upsertEntity(rawDoc.id, extraction.entity);
 
     for (const fact of extraction.business_facts) {
-      await upsertBusinessFactWithChangeDetection(canonical.sourceEntityType, canonical.sourceEntityId, fact);
+      await upsertBusinessFactWithChangeDetection(canonical.sourceEntityType, canonical.sourceEntityId, fact, {
+        rawDocumentId: rawDoc.id,
+      });
     }
 
     await insertRelationships(canonical.sourceEntityType, canonical.sourceEntityId, extraction.relationships);

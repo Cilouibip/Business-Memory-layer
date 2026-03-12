@@ -23,6 +23,106 @@ export type WeeklyStats = {
   deltaPercent: number;
 };
 
+export type BmlDigestionState = {
+  ingested: number;
+  triaged: number;
+  canonicalized: number;
+  extractionFailed: number;
+};
+
+export type BmlInsight = {
+  id: string;
+  domain: string;
+  fact_type: string;
+  fact_text: string;
+  confidence_score: number;
+  created_at: string;
+  source_content_published_at?: string | null;
+  effective_date: string;
+};
+
+export async function getBmlDigestionState(): Promise<BmlDigestionState> {
+  const { data, error } = await supabase
+    .from('raw_documents')
+    .select('processing_status');
+
+  if (error) {
+    console.error("Erreur digestion state", error);
+    return { ingested: 0, triaged: 0, canonicalized: 0, extractionFailed: 0 };
+  }
+
+  const rows = (data ?? []) as Array<{ processing_status: string }>;
+  return {
+    ingested: rows.filter((r) => r.processing_status === 'ingested').length,
+    triaged: rows.filter((r) => r.processing_status === 'triaged').length,
+    canonicalized: rows.filter((r) => r.processing_status === 'canonicalized').length,
+    extractionFailed: rows.filter((r) => r.processing_status === 'extraction_failed').length,
+  };
+}
+
+export async function getLatestInsights(limit = 3): Promise<BmlInsight[]> {
+  const sixMonthsAgo = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const minBusinessDate = '2025-01-01T00:00:00.000Z';
+
+  const recentSourceQuery = await supabase
+    .from('business_facts')
+    .select('id, domain, fact_type, fact_text, confidence_score, created_at, valid_from, source_content_published_at')
+    .is('valid_until', null)
+    .in('domain', ['strategie', 'client', 'offre'])
+    .not('source_content_published_at', 'is', null)
+    .gte('source_content_published_at', sixMonthsAgo)
+    .gte('source_content_published_at', minBusinessDate)
+    .order('source_content_published_at', { ascending: false })
+    .limit(limit * 4);
+
+  const fallbackQuery = await supabase
+    .from('business_facts')
+    .select('id, domain, fact_type, fact_text, confidence_score, created_at, valid_from, source_content_published_at')
+    .is('valid_until', null)
+    .in('domain', ['strategie', 'client', 'offre'])
+    .is('source_content_published_at', null)
+    .gte('valid_from', thirtyDaysAgo)
+    .gte('valid_from', minBusinessDate)
+    .order('valid_from', { ascending: false })
+    .limit(limit * 4);
+
+  if (recentSourceQuery.error || fallbackQuery.error) {
+    console.error("Erreur fetch insights", recentSourceQuery.error ?? fallbackQuery.error);
+    return [];
+  }
+
+  const merged = [...(recentSourceQuery.data ?? []), ...(fallbackQuery.data ?? [])] as Array<{
+    id: string;
+    domain: string;
+    fact_type: string;
+    fact_text: string;
+    confidence_score: number | null;
+    created_at: string;
+    valid_from: string;
+    source_content_published_at: string | null;
+  }>;
+
+  const deduped = new Map<string, BmlInsight>();
+  for (const row of merged) {
+    const effectiveDate = row.source_content_published_at ?? row.valid_from;
+    deduped.set(row.id, {
+      id: row.id,
+      domain: row.domain,
+      fact_type: row.fact_type,
+      fact_text: row.fact_text,
+      confidence_score: row.confidence_score ?? 0,
+      created_at: row.created_at,
+      source_content_published_at: row.source_content_published_at,
+      effective_date: effectiveDate,
+    });
+  }
+
+  return Array.from(deduped.values())
+    .sort((a, b) => Date.parse(b.effective_date) - Date.parse(a.effective_date))
+    .slice(0, limit);
+}
+
 export async function getDashboardStats() {
   // Compter les raw_documents par source
   const { data: rawDocs, error: rawDocsError } = await supabase
@@ -119,16 +219,27 @@ export async function getPipelineBusinessSummary(): Promise<PipelineBusinessSumm
   const currentMonth = now.getMonth();
   const rows = (data ?? []) as Array<{ status?: string; amount?: number | null; updated_at?: string | null }>;
 
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[Dashboard] Deals bruts:', rows.map(r => ({ status: r.status, amount: r.amount })));
+  }
+
   let leads = 0;
   let inProgress = 0;
   let proposals = 0;
   let wonThisMonthRevenue = 0;
 
   for (const row of rows) {
-    const status = row.status ?? 'lead';
+    const status = (row.status ?? 'lead').trim().toLowerCase();
     if (status === 'lead') leads += 1;
-    if (status === 'qualified' || status === 'call_scheduled') inProgress += 1;
-    if (status === 'proposal_sent') proposals += 1;
+    if (status === 'qualified' || status === 'qualification' || status === 'call_scheduled') inProgress += 1;
+    if (
+      status === 'proposal' ||
+      status === 'proposals' ||
+      status === 'proposal_sent' ||
+      status === 'proposal sent'
+    ) {
+      proposals += 1;
+    }
 
     if (status === 'won' && typeof row.amount === 'number') {
       const updatedAt = row.updated_at ? new Date(row.updated_at) : null;
@@ -171,14 +282,24 @@ export async function getTodayTasks() {
   } catch {}
 
   try {
+    const actionableStatuses = new Set([
+      'lead',
+      'qualified',
+      'qualification',
+      'proposal',
+      'proposal_sent',
+      'proposal sent',
+      'call_scheduled',
+    ]);
     const { data: deals } = await (supabase as any)
       .from('deals')
       .select('id, offer, next_action, next_action_date, status')
       .lte('next_action_date', today)
-      .not('next_action_date', 'is', null)
-      .in('status', ['lead', 'qualified', 'proposal', 'call_scheduled']);
+      .not('next_action_date', 'is', null);
 
     for (const deal of deals ?? []) {
+      const normalizedStatus = String(deal.status ?? '').trim().toLowerCase();
+      if (!actionableStatuses.has(normalizedStatus)) continue;
       items.push({
         type: 'deal_action',
         id: deal.id,
@@ -191,13 +312,23 @@ export async function getTodayTasks() {
   } catch {}
 
   try {
+    const actionableStatuses = new Set([
+      'lead',
+      'qualified',
+      'qualification',
+      'proposal',
+      'proposal_sent',
+      'proposal sent',
+      'call_scheduled',
+    ]);
     const { data: noAction } = await (supabase as any)
       .from('deals')
       .select('id, offer, status')
-      .is('next_action', null)
-      .in('status', ['lead', 'qualified', 'proposal', 'call_scheduled']);
+      .is('next_action', null);
 
     for (const deal of noAction ?? []) {
+      const normalizedStatus = String(deal.status ?? '').trim().toLowerCase();
+      if (!actionableStatuses.has(normalizedStatus)) continue;
       items.push({
         type: 'deal_action',
         id: deal.id,

@@ -15,6 +15,7 @@ type NotionPage = {
   id: string;
   url?: string;
   properties?: Record<string, unknown>;
+  created_time?: string;
   last_edited_time?: string;
 };
 
@@ -58,6 +59,7 @@ async function getLastCursor(sourceConnectionId: string): Promise<string | null>
     .from('sync_runs')
     .select('cursor')
     .eq('source_connection_id', sourceConnectionId)
+    .neq('status', 'running')
     .not('cursor', 'is', null)
     .order('started_at', { ascending: false })
     .limit(1)
@@ -68,6 +70,58 @@ async function getLastCursor(sourceConnectionId: string): Promise<string | null>
   }
 
   return data?.cursor ?? null;
+}
+
+async function createSyncRun(sourceConnectionId: string): Promise<string> {
+  const { data, error } = await (supabase as any)
+    .from('sync_runs')
+    .insert({
+      source_connection_id: sourceConnectionId,
+      source: 'notion',
+      status: 'running',
+      started_at: new Date().toISOString(),
+      start_time: new Date().toISOString(),
+    })
+    .select('id')
+    .single();
+
+  if (error || !data?.id) {
+    throw new Error(error?.message ?? 'Failed to create sync run');
+  }
+
+  return data.id;
+}
+
+async function finalizeSyncRun(params: {
+  syncRunId: string;
+  status: 'ingested' | 'failed';
+  cursor: string | null;
+  itemsProcessed: number;
+  itemsSkipped: number;
+  itemsFailed: number;
+  startedAt: number;
+  errorLog: Array<Record<string, unknown>>;
+}): Promise<void> {
+  const finishedAt = new Date().toISOString();
+  const { error } = await (supabase as any)
+    .from('sync_runs')
+    .update({
+      source: 'notion',
+      status: params.status,
+      cursor: params.cursor,
+      finished_at: finishedAt,
+      end_time: finishedAt,
+      items_processed: params.itemsProcessed,
+      items_skipped: params.itemsSkipped,
+      items_failed: params.itemsFailed,
+      duration_ms: Date.now() - params.startedAt,
+      error_log: params.errorLog,
+    })
+    .eq('id', params.syncRunId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
 }
 
 function extractTitle(page: NotionPage): string {
@@ -91,6 +145,8 @@ export async function syncNotion(): Promise<ConnectorResult> {
   let itemsFailed = 0;
   let nextCursor: string | null = null;
   const errorLog: Array<Record<string, unknown>> = [];
+  let status: 'ingested' | 'failed' = 'failed';
+  let fatalErrorMessage: string | null = null;
 
   try {
     const notionToken = process.env.NOTION_TOKEN;
@@ -100,32 +156,30 @@ export async function syncNotion(): Promise<ConnectorResult> {
 
     const notion = new Client({ auth: notionToken });
     const sourceConnectionId = await getOrCreateSourceConnectionId();
-
-    const { data: createdSyncRun, error: createSyncRunError } = await (supabase as any)
-      .from('sync_runs')
-      .insert({
-        source_connection_id: sourceConnectionId,
-        status: 'running',
-        started_at: new Date().toISOString(),
-      })
-      .select('id')
-      .single();
-
-    if (createSyncRunError || !createdSyncRun?.id) {
-      throw new Error(createSyncRunError?.message ?? 'Failed to create sync run');
-    }
-
-    syncRunId = createdSyncRun.id;
+    syncRunId = await createSyncRun(sourceConnectionId);
     const lastCursor = await getLastCursor(sourceConnectionId);
 
-    await wait(350);
-    const searchResponse = await notion.search({
-      filter: { property: 'object', value: 'page' },
-      sort: { timestamp: 'last_edited_time', direction: 'descending' },
-      page_size: 100,
-    });
+    const pages: NotionPage[] = [];
+    let startCursor: string | undefined;
+    let hasMore = true;
 
-    const pages = searchResponse.results as unknown as NotionPage[];
+    while (hasMore) {
+      await wait(350);
+      const searchResponse = await notion.search({
+        filter: { property: 'object', value: 'page' },
+        sort: { timestamp: 'last_edited_time', direction: 'descending' },
+        page_size: 100,
+        start_cursor: startCursor,
+      });
+
+      pages.push(...(searchResponse.results as unknown as NotionPage[]));
+      hasMore = Boolean(searchResponse.has_more);
+      startCursor = searchResponse.next_cursor ?? undefined;
+    }
+
+    console.log(`[notion-sync] Found ${pages.length} pages from Notion API`);
+
+    let newOrUpdatedCount = 0;
 
     for (const page of pages) {
       const editedAt = page.last_edited_time ?? null;
@@ -140,6 +194,7 @@ export async function syncNotion(): Promise<ConnectorResult> {
       }
 
       try {
+        newOrUpdatedCount += 1;
         await wait(350);
         const blockResponse = await notion.blocks.children.list({ block_id: page.id, page_size: 100 });
         const content = await notionBlocksToText(notion, blockResponse.results as any);
@@ -148,6 +203,7 @@ export async function syncNotion(): Promise<ConnectorResult> {
           pageId: page.id,
           title: extractTitle(page),
           url: page.url ?? '',
+          createdTime: page.created_time ?? null,
           lastEditedTime: editedAt,
           properties: page.properties ?? {},
           content,
@@ -180,28 +236,14 @@ export async function syncNotion(): Promise<ConnectorResult> {
       }
     }
 
-    const status = itemsFailed > 0 && itemsProcessed === 0 ? 'failed' : 'ingested';
-    const durationMs = Date.now() - startedAt;
-
-    await (supabase as any)
-      .from('sync_runs')
-      .update({
-        status,
-        cursor: nextCursor,
-        finished_at: new Date().toISOString(),
-        items_processed: itemsProcessed,
-        items_skipped: itemsSkipped,
-        items_failed: itemsFailed,
-        duration_ms: durationMs,
-        error_log: errorLog,
-      })
-      .eq('id', syncRunId);
+    console.log(`[notion-sync] New/updated: ${newOrUpdatedCount}, Skipped: ${itemsSkipped}`);
+    status = itemsFailed > 0 && itemsProcessed === 0 ? 'failed' : 'ingested';
 
     console.log(
       JSON.stringify({
         source: 'notion',
         run_id: syncRunId,
-        duration_ms: durationMs,
+        duration_ms: Date.now() - startedAt,
         items_processed: itemsProcessed,
         items_skipped: itemsSkipped,
         items_failed: itemsFailed,
@@ -216,28 +258,36 @@ export async function syncNotion(): Promise<ConnectorResult> {
       items_failed: itemsFailed,
     };
   } catch (error) {
-    if (syncRunId) {
-      await (supabase as any)
-        .from('sync_runs')
-        .update({
-          status: 'failed',
-          finished_at: new Date().toISOString(),
-          items_processed: itemsProcessed,
-          items_skipped: itemsSkipped,
-          items_failed: itemsFailed + 1,
-          duration_ms: Date.now() - startedAt,
-          error_log: [...errorLog, { message: (error as Error).message }],
-        })
-        .eq('id', syncRunId);
-    }
+    status = 'failed';
+    fatalErrorMessage = (error as Error).message;
+    itemsFailed += 1;
 
     return {
       success: false,
       syncRunId,
       items_processed: itemsProcessed,
       items_skipped: itemsSkipped,
-      items_failed: itemsFailed + 1,
-      error: (error as Error).message,
+      items_failed: itemsFailed,
+      error: fatalErrorMessage,
     };
+  } finally {
+    if (syncRunId) {
+      const finalErrorLog =
+        fatalErrorMessage === null ? errorLog : [...errorLog, { message: fatalErrorMessage }];
+      try {
+        await finalizeSyncRun({
+          syncRunId,
+          status,
+          cursor: nextCursor,
+          itemsProcessed,
+          itemsSkipped,
+          itemsFailed,
+          startedAt,
+          errorLog: finalErrorLog,
+        });
+      } catch (finalizeError) {
+        console.error(`[notion-sync] Failed to finalize sync run ${syncRunId}:`, finalizeError);
+      }
+    }
   }
 }

@@ -1,7 +1,7 @@
 import { runPipeline } from '../src/pipeline/orchestrator';
 
 type CliOptions = {
-  sources?: Array<'youtube' | 'linkedin' | 'notion'>;
+  sources?: Array<'youtube' | 'linkedin' | 'notion' | 'gdrive'>;
   skipSync?: boolean;
   limit?: number;
 };
@@ -23,8 +23,8 @@ function parseArgs(argv: string[]): CliOptions {
       const parsed = value
         .split(',')
         .map((source) => source.trim())
-        .filter((source): source is 'youtube' | 'linkedin' | 'notion' => {
-          return source === 'youtube' || source === 'linkedin' || source === 'notion';
+        .filter((source): source is 'youtube' | 'linkedin' | 'notion' | 'gdrive' => {
+          return source === 'youtube' || source === 'linkedin' || source === 'notion' || source === 'gdrive';
         });
 
       if (parsed.length > 0) {

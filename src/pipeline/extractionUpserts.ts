@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { resolveSourcePublishDate } from '../lib/sourceDateResolver';
 import { ContentExtraction, GenericExtraction, OfferExtraction } from '../schemas/extraction';
 
 export type CanonicalEntity = {
@@ -19,6 +20,7 @@ function normalizeOptionalIsoDate(value: string | null | undefined): string | nu
   const parsed = Date.parse(trimmed);
   return Number.isNaN(parsed) ? null : trimmed;
 }
+
 
 export async function upsertContentItem(
   rawDocId: string,
@@ -109,6 +111,7 @@ export async function upsertBusinessFactWithChangeDetection(
   sourceEntityType: string,
   sourceEntityId: string,
   fact: { fact_type: string; fact_text: string; domain: string; confidence_score: number },
+  options?: { sourceContentPublishedAt?: string | null; rawDocumentId?: string | null },
 ): Promise<void> {
   const { data: existing, error: existingError } = await (supabase as any)
     .from('business_facts')
@@ -126,6 +129,12 @@ export async function upsertBusinessFactWithChangeDetection(
   }
 
   const now = new Date().toISOString();
+  const resolvedSourceDate = await resolveSourcePublishDate(
+    sourceEntityType,
+    sourceEntityId,
+    options?.rawDocumentId,
+    options?.sourceContentPublishedAt,
+  );
 
   if (existing?.id) {
     if (existing.fact_text === fact.fact_text) {
@@ -142,6 +151,7 @@ export async function upsertBusinessFactWithChangeDetection(
     source_entity_type: sourceEntityType,
     source_entity_id: sourceEntityId,
     confidence_score: fact.confidence_score,
+    source_content_published_at: resolvedSourceDate,
     valid_from: now,
     valid_until: null,
   });

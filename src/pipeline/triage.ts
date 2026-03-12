@@ -8,6 +8,26 @@ type RawDocumentInput = {
   raw_payload: Record<string, unknown>;
 };
 
+function isOperationalNotionDocument(rawDoc: RawDocumentInput): boolean {
+  if (rawDoc.source_type !== 'notion') {
+    return false;
+  }
+
+  const title = String(rawDoc.raw_payload.title ?? '').toLowerCase();
+  const content = String(rawDoc.raw_payload.content ?? '').toLowerCase();
+  const text = `${title} ${content}`;
+
+  return (
+    text.includes('to do') ||
+    text.includes('todo') ||
+    text.includes('command center') ||
+    text.includes('content pipeline') ||
+    text.includes('bible youtube') ||
+    text.includes('template') ||
+    text.includes('workflow')
+  );
+}
+
 const TRIAGE_PROMPT_TEMPLATE = `Tu es un assistant qui classe des documents business.
 
 Contexte : Tu travailles pour un fondateur solo (consultant, créateur de contenu B2B). Tu reçois un document brut provenant de ses outils (YouTube, LinkedIn, Notion, Google Drive).
@@ -31,6 +51,10 @@ Règles de scoring :
 - 0.5-0.8 : indirectement utile (notes, brouillons, références)
 - 0.2-0.5 : faiblement pertinent (contenu générique, admin)
 - 0.0-0.2 : non pertinent (spam, bruit)
+
+IMPORTANT : Les pages Notion de type opérationnel (to-do lists, command centers, pipelines de contenu, bibles de production, templates de travail) sont TOUJOURS pertinentes pour le business d'un fondateur solo.
+- Score minimum 0.6 pour ces pages.
+- Catégorie attendue : "process" ou "strategie" selon le contenu.
 
 Document à analyser :
 Source : {source_type}
@@ -56,19 +80,35 @@ export async function triageDocument(rawDoc: RawDocumentInput): Promise<TriageRe
       maxRetries: 2,
     });
 
-    const processingStatus = result.relevance_score > 0.5 ? 'triaged' : 'skipped';
+    const operationalNotion = isOperationalNotionDocument(rawDoc);
+    const forcedScore = operationalNotion ? Math.max(result.relevance_score, 0.6) : result.relevance_score;
+    const forcedCategory =
+      operationalNotion && result.business_category === 'autre' ? 'process' : result.business_category;
+    const forcedSummary =
+      operationalNotion && !result.summary.trim()
+        ? 'Document opérationnel Notion pertinent pour le pilotage business.'
+        : result.summary;
+
+    const processingStatus = forcedScore > 0.5 ? 'triaged' : 'skipped';
+    if (operationalNotion && processingStatus === 'skipped') {
+      console.warn(`[triage] Unexpected skipped status for operational Notion doc ${rawDoc.id}`);
+    }
 
     await (supabase as any)
       .from('raw_documents')
       .update({
-        relevance_score: result.relevance_score,
-        business_category: result.business_category,
-        summary: result.summary,
+        relevance_score: forcedScore,
+        business_category: forcedCategory,
+        summary: forcedSummary,
         processing_status: processingStatus,
       })
       .eq('id', rawDoc.id);
 
-    return result;
+    return {
+      relevance_score: forcedScore,
+      business_category: forcedCategory,
+      summary: forcedSummary,
+    };
   } catch (error) {
     if (error instanceof ClaudeZodValidationError) {
       await (supabase as any)

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { searchMemory } from '../../lib/memoryQueries';
 import { callClaude } from '../../lib/claude';
 import { supabase } from '../../lib/supabase';
+import { createTask } from '../../lib/taskQueries';
 import { buildExtractorPrompt, buildWriterPromptV2 } from './prompts';
 
 const STYLES = ['mentor', 'contrarian', 'story', 'analyst'] as const;
@@ -214,6 +215,19 @@ export async function generateDraft(workspaceId = 'personal') {
 
     if (error) {
       throw new Error(`Impossible d'insérer le draft LinkedIn: ${error.message}`);
+    }
+
+    try {
+      await createTask({
+        title: 'Valider draft LinkedIn du jour',
+        priority: 'high',
+        due_date: new Date().toISOString().slice(0, 10),
+        source_type: 'agent',
+        source_id: data.id,
+        workspace_id: workspaceId,
+      });
+    } catch (e) {
+      console.error('[hook] Failed to create draft validation task:', e);
     }
 
     console.log({
